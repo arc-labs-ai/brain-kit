@@ -10,10 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  WriteError,
   mergeServer,
   readServer,
   removeServer,
-  WriteError,
 } from "../src/clients/json.js";
 
 const ENTRY = {
@@ -73,9 +73,7 @@ describe("writing into someone's existing config", () => {
       env: { ...ENTRY.env, BRAIN_MCP_BACKEND_URL: "https://changed" },
     });
     expect(second.replaced).toBe(true);
-    expect(readServer(path, "brain")?.env.BRAIN_MCP_BACKEND_URL).toBe(
-      "https://changed",
-    );
+    expect(readServer(path, "brain")?.env.BRAIN_MCP_BACKEND_URL).toBe("https://changed");
   });
 
   it("backs it up before the first change", () => {
@@ -124,10 +122,9 @@ describe("a config this tool must not touch", () => {
   it("refuses a JSON file that is not an object", () => {
     for (const contents of ["[1,2,3]", '"a string"', "42", "null"]) {
       writeFileSync(path, contents);
-      expect(
-        () => mergeServer(path, "brain", ENTRY),
-        `accepted ${contents}`,
-      ).toThrow(WriteError);
+      expect(() => mergeServer(path, "brain", ENTRY), `accepted ${contents}`).toThrow(
+        WriteError,
+      );
       expect(readFileSync(path, "utf8")).toBe(contents);
     }
   });

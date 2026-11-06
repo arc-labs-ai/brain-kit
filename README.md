@@ -128,6 +128,60 @@ cases. Running it is the only thing that finds them.
 | `--no-browser` | Print the URL instead of opening one |
 | `--dry-run` | Say what would change, write nothing |
 
+## The skills
+
+An MCP server is tools. A tool surface with no skill beside it is one an agent
+picks wrongly from — **49 tool definitions load on every turn**, and without
+guidance the agent reaches for `memory_list` when it meant `recall`, or never
+discovers the 41 tools that are not `remember`.
+
+So the skills are the other half of the product, and they are organised by the
+**work** rather than by the server's file layout:
+
+| skill | the work | tools |
+|---|---|---|
+| `brain-memory` | the core loop — store, recall, correct, reason over what is held. The entry point, and it carries a map of everything else | 8 |
+| `brain-entities` | people, services, repositories as typed objects with relationships. "Who is X", "how are X and Y connected", merging duplicates | 14 |
+| `brain-knowledge` | a claim is wrong, outdated or disputed. Provenance, supersession, retraction | 11 |
+| `brain-schema` | declaring the types a workspace uses, and what reads new writes | 6 |
+| `brain-workspace` | which workspace this is, why a recall came back empty, what a query cost | 10 |
+
+Only the name and description of each are loaded at startup — about **985
+tokens**, the price of the agent knowing the whole surface exists. A skill's
+body is paid only when that work comes up, and
+`skills/brain-memory/references/tool-index.md` — a one-line entry for all 49 —
+only when the agent needs to know whether a capability exists at all.
+
+That index is **generated** from the server's own `registerTool` calls by
+`scripts/build-tool-index.py`. A tool renamed in the server and not in the
+index is worse than no index: it sends the agent looking for something gone.
+
+## One copy of each skill
+
+The skills live once, in `skills/`, and reach both delivery paths from there:
+
+```
+brain-kit/
+├── .claude-plugin/
+│   ├── plugin.json        "skills": "./skills/"   ← the Claude Code plugin
+│   └── marketplace.json   source: "."
+├── skills/                ← THE source of truth
+│   ├── brain-memory/{SKILL.md, references/}
+│   ├── brain-entities/SKILL.md
+│   └── …
+└── src/                   the CLI, which copies them to ~/.agents/skills
+```
+
+**The repository root is the plugin.** That is what lets one `skills/` serve
+both: a plugin's `skills` path must start with `./` and cannot escape the
+plugin root, so the alternatives were a second copy under `plugins/brain/` or
+a symlink. There was a second copy, and the two were already identical with
+nothing keeping them that way — the same drift that has bitten this codebase
+in three other places.
+
+Adding another client later means another packaging manifest pointing at the
+same `skills/`, never another copy of the skills.
+
 ## What gets configured where
 
 | Client | MCP server | Skills |

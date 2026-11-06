@@ -18,8 +18,8 @@
   },
   "files": [
     "dist",
-    "plugins",
     "skills",
+    ".claude-plugin",
     "README.md",
     "LICENSE"
   ],

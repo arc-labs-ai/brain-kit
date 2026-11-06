@@ -16,8 +16,8 @@
       "command": "npx",
       "args": ["-y", "@brain-db/mcp", "--stdio"],
       "env": {
-        "BRAIN_MCP_BACKEND_URL": "${user_config.backend_url}",
-        "BRAIN_MCP_API_KEY": "${user_config.api_key}"
+        "BRAIN_MCP_API_KEY": "${user_config.api_key}",
+        "BRAIN_MCP_BACKEND_URL": "${user_config.backend_url}"
       }
     }
   },
@@ -35,5 +35,6 @@
       "description": "The Brain this connects to. Leave the default for the hosted gateway, or point it at a local brain-edge (http://localhost:8080).",
       "default": "https://api.stg.arc-labs.ai"
     }
-  }
+  },
+  "skills": "./skills/"
 }
