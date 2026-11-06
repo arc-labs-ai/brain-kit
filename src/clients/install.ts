@@ -155,30 +155,88 @@ function viaPlugin(target: ClientTarget, bin: string, spec: ServerSpec): Outcome
   const marketplace = ensureMarketplace(bin);
   if (marketplace) return { client: target, status: "failed", detail: marketplace };
 
-  const result = run(bin, [
+  const id = `${PLUGIN}@${MARKETPLACE}`;
+
+  // Install carries NO secret on its command line. A required option left
+  // unset is reported and does not block the install, which is what makes the
+  // two-step possible.
+  const installed = run(bin, ["plugin", "install", id, "--json"]);
+  if (installed.code !== 0) {
+    return {
+      client: target,
+      status: "failed",
+      detail: looksUnsupported(installed)
+        ? "this version of Claude Code cannot install plugins non-interactively — update it, then run connect again"
+        : reasonFrom(installed),
+    };
+  }
+
+  const stored = storePluginConfig(bin, id, spec);
+  if (stored.status === "failed") {
+    return { client: target, status: "failed", detail: stored.detail };
+  }
+
+  const notes = [stored.detail];
+  if (shadow === "removed") {
+    notes.push("removed the old server that was shadowing it");
+  }
+  return {
+    client: target,
+    status: "configured",
+    detail: `plugin ${PLUGIN} installed — ${notes.join("; ")}`,
+  };
+}
+
+/**
+ * Hand the plugin its credential.
+ *
+ * **Over stdin, not on the command line.** `--config api_key=…` works and was
+ * the first implementation, but a process's arguments are readable by every
+ * other process on the machine — `ps` shows them — and they land in audit logs
+ * and process accounting. A credential has no business being an argv entry
+ * when the tool offers a way to pipe it.
+ *
+ * Falls back to `--config` on a version without `--values-stdin`, because a
+ * working install with a brief argv exposure beats no install at all — and it
+ * says which path it took, so the trade is visible rather than silent.
+ */
+function storePluginConfig(
+  bin: string,
+  id: string,
+  spec: ServerSpec,
+): { status: "configured" | "failed"; detail: string } {
+  const values = JSON.stringify({
+    api_key: spec.env.BRAIN_MCP_API_KEY ?? "",
+    backend_url: spec.env.BRAIN_MCP_BACKEND_URL ?? "",
+  });
+
+  const piped = run(bin, ["plugin", "configure", id, "--values-stdin"], {
+    input: `${values}\n`,
+  });
+  if (piped.code === 0) {
+    return { status: "configured", detail: "key in your keychain" };
+  }
+  if (!looksUnsupported(piped)) {
+    return { status: "failed", detail: reasonFrom(piped) };
+  }
+
+  const viaArgs = run(bin, [
     "plugin",
     "install",
-    `${PLUGIN}@${MARKETPLACE}`,
+    id,
     "--config",
     `api_key=${spec.env.BRAIN_MCP_API_KEY ?? ""}`,
     "--config",
     `backend_url=${spec.env.BRAIN_MCP_BACKEND_URL ?? ""}`,
     "--json",
   ]);
-  if (result.code !== 0) {
-    return {
-      client: target,
-      status: "failed",
-      detail: looksUnsupported(result)
-        ? "this version of Claude Code cannot install plugins non-interactively — update it, then run connect again"
-        : reasonFrom(result),
-    };
-  }
-  const detail =
-    shadow === "removed"
-      ? `plugin ${PLUGIN} installed (removed the old server that was shadowing it)`
-      : `plugin ${PLUGIN} installed, key in your keychain`;
-  return { client: target, status: "configured", detail };
+  return viaArgs.code === 0
+    ? {
+        status: "configured",
+        detail:
+          "key in your keychain (passed as an argument — this Claude Code is too old to take it on stdin)",
+      }
+    : { status: "failed", detail: reasonFrom(viaArgs) };
 }
 
 /**
@@ -261,7 +319,15 @@ function ensureMarketplace(bin: string): string | undefined {
   if (!alreadyThere) return reasonFrom(added);
 
   // Already registered. Re-point it, in case it is an older source — the
-  // plugin used to ship from the MCP server's own repo.
+  // plugin used to ship from the MCP server's own repo, and that source stops
+  // resolving the moment this repo's copy becomes the real one.
+  //
+  // `marketplace remove` is DESTRUCTIVE: it also uninstalls every plugin from
+  // that marketplace and deletes their saved options and secrets. Verified,
+  // not assumed — it says so when it runs. That is acceptable only because
+  // the install and the credential write both follow unconditionally; never
+  // reorder this so a configure-only path can run after a remove, or the key
+  // is simply gone.
   run(bin, ["plugin", "marketplace", "remove", MARKETPLACE], {
     timeoutMs: 20_000,
   });

@@ -27,6 +27,8 @@ export type ConnectStatus =
   | "pending"
   | "approving"
   | "approved"
+  /** Approved, and the credential has been collected. Terminal. */
+  | "collected"
   | "denied"
   | "failed"
   | "expired";
@@ -284,23 +286,39 @@ export class ConnectClient {
     onStatus: (status: ConnectStatus) => void,
     signal?: AbortSignal,
   ): Promise<ConnectStatus | undefined> {
-    // Its own controller so the silence timer can cut this attempt without
+    // Its own controller so the silence watchdog can cut this attempt without
     // cancelling the caller's whole operation.
     const attempt = new AbortController();
     const onOuterAbort = () => attempt.abort();
     signal?.addEventListener("abort", onOuterAbort, { once: true });
 
+    // Whether it was OUR watchdog that aborted, rather than the caller.
+    //
+    // This flag is the whole fix for a bug that defeated the reconnect design:
+    // both aborts surface as the same `AbortError`, so without it a silent
+    // connection — a laptop changing networks, the exact case the watchdog
+    // exists for — was indistinguishable from the user pressing ctrl-C, and
+    // `watch` gave up with "Cancelled." instead of reconnecting.
+    let silenced = false;
+
     let silence: ReturnType<typeof setTimeout> | undefined;
     const resetSilence = () => {
       if (silence) clearTimeout(silence);
-      silence = setTimeout(() => attempt.abort(), STREAM_SILENCE_MS);
+      silence = setTimeout(() => {
+        silenced = true;
+        attempt.abort();
+      }, STREAM_SILENCE_MS);
     };
 
     try {
       const response = await this.send(
         "GET",
         `/v1/connect/sessions/${session.sessionId}/stream`,
-        { secret: session.secret, signal: attempt.signal, accept: "text/event-stream" },
+        {
+          secret: session.secret,
+          signal: attempt.signal,
+          accept: "text/event-stream",
+        },
       );
       resetSilence();
       for await (const event of readEvents(response)) {
@@ -311,6 +329,14 @@ export class ConnectClient {
         if (isTerminal(status)) return status;
       }
       return undefined;
+    } catch (err) {
+      // Our own watchdog, and the caller has not cancelled: the connection
+      // went quiet. That is a dropped stream, which is a reconnect — reported
+      // the same way a server-closed stream is.
+      if (silenced && isAbort(err) && signal?.aborted !== true) {
+        return undefined;
+      }
+      throw err;
     } finally {
       if (silence) clearTimeout(silence);
       signal?.removeEventListener("abort", onOuterAbort);
@@ -433,6 +459,7 @@ export class ConnectClient {
 export function isTerminal(status: ConnectStatus): boolean {
   return (
     status === "approved" ||
+    status === "collected" ||
     status === "denied" ||
     status === "failed" ||
     status === "expired"
@@ -542,6 +569,7 @@ function asStatus(raw: string | undefined): ConnectStatus | undefined {
     case "pending":
     case "approving":
     case "approved":
+    case "collected":
     case "denied":
     case "failed":
     case "expired":

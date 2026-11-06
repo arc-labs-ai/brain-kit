@@ -278,7 +278,11 @@ async function handoff(
   }
   say();
 
-  const spinner = waiting("waiting for you to approve…");
+  // One handle, reassigned. The first version created the second spinner and
+  // threw the handle away, so its interval ran for the life of the process —
+  // which also stopped the process exiting, since an active timer keeps the
+  // event loop alive.
+  let spinner = waiting("waiting for you to approve…");
   let status: ConnectStatus;
   try {
     status = await client.watch(session, (next) => {
@@ -287,7 +291,7 @@ async function handoff(
       // act" to "the server is working", and they look identical otherwise.
       if (next === "approving") {
         spinner.stop();
-        waiting("approved — creating your key…");
+        spinner = waiting("approved — creating your key…");
       }
     });
   } catch (err) {
@@ -299,6 +303,12 @@ async function handoff(
   switch (status) {
     case "approved":
       break;
+    case "collected":
+      problem(
+        "A credential for this request has already been collected.",
+        "If that was not you, revoke the key in the dashboard. Otherwise run connect again.",
+      );
+      return 1;
     case "denied":
       problem(
         "Declined in the browser.",

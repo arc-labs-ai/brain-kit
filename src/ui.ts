@@ -54,6 +54,10 @@ const BOX = UNICODE
 /** The label column's width. Every `field` aligns to it. */
 const LABEL_WIDTH = 10;
 
+/** The wider column `item` rows align to; long enough for every client name
+ *  and for a `skill: <name>` row. */
+const ITEM_LABEL_WIDTH = 22;
+
 export function say(line = ""): void {
   process.stderr.write(`${line}\n`);
 }
@@ -98,7 +102,10 @@ const MARKS: Record<Mark, string> = UNICODE
  * the path is what gets read once, when something is wrong.
  */
 export function item(mark: Mark, label: string, detail: string): void {
-  say(`    ${MARKS[mark]} ${label.padEnd(18)} ${dim(detail)}`);
+  // One space minimum even when the label runs past the column, or a long
+  // label butts straight into its detail — which is what "skill: brain-memory"
+  // did at eighteen.
+  say(`    ${MARKS[mark]} ${label.padEnd(ITEM_LABEL_WIDTH)} ${dim(detail)}`);
 }
 
 /**
