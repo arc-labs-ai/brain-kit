@@ -10,14 +10,18 @@
   "homepage": "https://github.com/arc-labs-ai/brain-kit#readme",
   "repository": "https://github.com/arc-labs-ai/brain-kit",
   "license": "Apache-2.0",
-  "keywords": ["memory", "mcp", "brain", "ai-agents"],
+  "keywords": [
+    "memory",
+    "mcp",
+    "brain",
+    "ai-agents"
+  ],
   "mcpServers": {
     "brain": {
-      "command": "npx",
-      "args": ["-y", "@brain-db/mcp", "--stdio"],
-      "env": {
-        "BRAIN_MCP_API_KEY": "${user_config.api_key}",
-        "BRAIN_MCP_BACKEND_URL": "${user_config.backend_url}"
+      "type": "http",
+      "url": "${user_config.mcp_url}",
+      "headers": {
+        "Authorization": "Bearer ${user_config.api_key}"
       }
     }
   },
@@ -28,6 +32,12 @@
       "description": "Your own key, from the dashboard under API Keys. Every call runs as you; the key never leaves this machine.",
       "required": true,
       "sensitive": true
+    },
+    "mcp_url": {
+      "type": "string",
+      "title": "Brain MCP endpoint",
+      "description": "The hosted MCP server this plugin connects to. Brain runs it, so nothing is installed or kept up to date on this machine. Change it only to point at your own deployment.",
+      "default": "https://mcp.stg.arc-labs.ai/mcp"
     },
     "backend_url": {
       "type": "string",

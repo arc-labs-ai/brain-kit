@@ -19,6 +19,7 @@
   "files": [
     "dist",
     "skills",
+    "clients",
     ".claude-plugin",
     "README.md",
     "LICENSE"
