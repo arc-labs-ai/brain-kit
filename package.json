@@ -1,6 +1,6 @@
 {
   "name": "@brain-db/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One command to connect your agents to Brain: MCP servers, skills and the Claude Code plugin, configured across every client on the machine.",
   "license": "Apache-2.0",
   "author": "Niraj Georgian",

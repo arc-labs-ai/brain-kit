@@ -1,7 +1,7 @@
 {
   "name": "brain",
   "displayName": "Brain",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Durable, current-truth memory for your agent: remember, recall, reason, and a typed entity graph, backed by the Brain memory database.",
   "author": {
     "name": "Arc Labs",
@@ -10,7 +10,12 @@
   "homepage": "https://github.com/arc-labs-ai/brain-kit#readme",
   "repository": "https://github.com/arc-labs-ai/brain-kit",
   "license": "Apache-2.0",
-  "keywords": ["memory", "mcp", "brain", "ai-agents"],
+  "keywords": [
+    "memory",
+    "mcp",
+    "brain",
+    "ai-agents"
+  ],
   "mcpServers": {
     "brain": {
       "type": "http",

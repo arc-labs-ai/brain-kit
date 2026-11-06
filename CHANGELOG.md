@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/arc-labs-ai/brain-kit/compare/v0.1.0...v0.1.1) (2026-11-06)
+
+
+### Fixes
+
+* **doctor:** report this package's real version to the server, not a literal ([0eb80d0](https://github.com/arc-labs-ai/brain-kit/commit/0eb80d0e92d6607a07523e3e368f300c560fd980))
+
 ## 0.1.0 (2026-11-06)
 
 
