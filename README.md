@@ -208,11 +208,6 @@ is atomic, and a file that cannot be parsed is **refused** rather than
 overwritten — a trailing comma in your config is not permission to delete the
 rest of it.
 
-## Design notes
-
-- [docs/TIMERS.md](docs/TIMERS.md) — every timer in the handoff and why it is
-  there, which timers were removed, and the bug that audit turned up.
-
 ## License
 
 Apache-2.0
