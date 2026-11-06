@@ -24,13 +24,46 @@
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
-/** What gets written into a client's config. */
-export type ServerSpec = {
+/**
+ * A **remote** MCP server — the normal case.
+ *
+ * Brain hosts the MCP server. A client dials it over Streamable HTTP with the
+ * user's own key as a bearer and runs no local process at all: nothing to
+ * install, nothing to keep up to date, and a server-side fix reaches everyone
+ * without a reinstall.
+ */
+export type RemoteSpec = {
+  transport: "http";
+  name: string;
+  /** The hosted endpoint, as the issuing deployment named it. */
+  url: string;
+  apiKey: string;
+  /** The API base. Carried for the Claude Code plugin, which stores both. */
+  backendUrl: string;
+};
+
+/**
+ * A **local** MCP server, run as a child process — the self-hosting case.
+ *
+ * Only reached when the deployment that issued the key hosts no MCP server of
+ * its own, or when `--stdio` asks for it. It is the slower path in every
+ * respect: a cold `npx` costs ~1.3s against ~0.2s for a resolved binary, the
+ * version in use is whatever that machine last fetched, and a fix ships only
+ * when every user reinstalls.
+ */
+export type StdioSpec = {
+  transport: "stdio";
   name: string;
   command: string;
   args: string[];
   env: Record<string, string>;
 };
+
+/** What gets written into a client's config. */
+export type ServerSpec = RemoteSpec | StdioSpec;
+
+/** How a client reaches an MCP server. */
+export type Transport = ServerSpec["transport"];
 
 /** How a client is configured. */
 export type Writer =
@@ -49,6 +82,26 @@ export type ClientTarget = {
   evidence: string[];
   /** Whether this client reads portable skills from `~/.agents/skills`. */
   readsSkills: boolean;
+  /**
+   * The transports this client's config format can actually express.
+   *
+   * Per-client and not a global assumption, because the clients genuinely
+   * differ and the difference is invisible until something silently fails.
+   * Claude Desktop is the one that matters: its config file takes stdio
+   * servers only, and a `url` entry there has been reported to make it rewrite
+   * the file and drop the whole `mcpServers` section on restart — so writing
+   * one is not a harmless no-op, it destroys the user's other servers.
+   *
+   * A client that cannot express the transport in hand is reported with the
+   * manual step for it, never written to and hoped for.
+   */
+  transports: Transport[];
+  /**
+   * How to configure a transport this client cannot be written to
+   * automatically. Receives the resolved spec so the message can name the real
+   * endpoint rather than a placeholder.
+   */
+  manual?: (spec: ServerSpec) => string;
   docs: string;
 };
 
@@ -84,6 +137,8 @@ export function targets(): ClientTarget[] {
       evidence: [join(home, ".claude"), join(home, ".claude.json")],
       // The plugin carries its own skills; it does not read the shared path.
       readsSkills: false,
+      // The plugin manifest expresses either, and HTTP is what it ships.
+      transports: ["http", "stdio"],
       docs: "https://docs.claude.com/en/docs/claude-code/plugins",
     },
     {
@@ -95,6 +150,10 @@ export function targets(): ClientTarget[] {
       writer: { kind: "cli", bin: "codex" },
       evidence: [join(home, ".codex")],
       readsSkills: true,
+      // `codex mcp add --url` writes a streamable-HTTP server. Note that it
+      // takes `--bearer-token-env-var`, never a literal token, so the remote
+      // path here configures an env var rather than storing the key.
+      transports: ["http", "stdio"],
       docs: "https://developers.openai.com/codex/mcp",
     },
     {
@@ -103,6 +162,7 @@ export function targets(): ClientTarget[] {
       writer: { kind: "json", path: join(home, ".cursor", "mcp.json") },
       evidence: [join(home, ".cursor")],
       readsSkills: true,
+      transports: ["http", "stdio"],
       docs: "https://cursor.com/docs/context/mcp",
     },
     {
@@ -115,6 +175,14 @@ export function targets(): ClientTarget[] {
       evidence: [join(support, "Claude")],
       // No skills support: it is a chat client, not an agent harness.
       readsSkills: false,
+      // stdio ONLY — see `transports` on ClientTarget. A `url` entry in
+      // `claude_desktop_config.json` is not merely ignored; it has been
+      // reported to take the user's other servers with it on restart.
+      transports: ["stdio"],
+      manual: (spec) =>
+        spec.transport === "http"
+          ? `add it in Claude Desktop → Settings → Connectors → Add custom connector, using ${spec.url}`
+          : "add it by hand in Settings → Developer → Edit Config",
       docs: "https://modelcontextprotocol.io/quickstart/user",
     },
     {
@@ -126,6 +194,7 @@ export function targets(): ClientTarget[] {
       },
       evidence: [join(home, ".codeium", "windsurf")],
       readsSkills: true,
+      transports: ["http", "stdio"],
       docs: "https://docs.windsurf.com/windsurf/cascade/mcp",
     },
   ];

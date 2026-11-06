@@ -19,6 +19,8 @@ import { say } from "./ui.js";
 export type Parsed = {
   command: "connect" | "doctor" | "help" | "version";
   backendUrl: string;
+  mcpUrl: string | undefined;
+  selfHost: boolean;
   clients: string[];
   dryRun: boolean;
   noBrowser: boolean;
@@ -45,6 +47,10 @@ export function parse(argv: string[]): Parsed {
   const parsed: Parsed = {
     command: "connect",
     backendUrl: process.env.BRAIN_MCP_BACKEND_URL ?? DEFAULT_BACKEND,
+    // Unset, not defaulted: an unset value means "use whatever the deployment
+    // that issues the key says", which is the behaviour that cannot be wrong.
+    mcpUrl: process.env.BRAIN_MCP_URL,
+    selfHost: false,
     clients: [],
     dryRun: false,
     noBrowser: false,
@@ -81,6 +87,12 @@ export function parse(argv: string[]): Parsed {
       case "--backend":
         parsed.backendUrl = next();
         break;
+      case "--mcp-url":
+        parsed.mcpUrl = next();
+        break;
+      case "--self-host":
+        parsed.selfHost = true;
+        break;
       case "--client":
         parsed.clients.push(next());
         break;
@@ -113,6 +125,11 @@ export function parse(argv: string[]): Parsed {
   }
 
   parsed.backendUrl = parsed.backendUrl.replace(/\/+$/, "");
+  // Not stripped of a trailing slash: this is a full endpoint path (`…/mcp`),
+  // not a base, and trimming it would be trimming someone's route.
+  if (parsed.mcpUrl !== undefined && parsed.mcpUrl.trim() === "") {
+    parsed.mcpUrl = undefined;
+  }
   return parsed;
 }
 
@@ -126,6 +143,10 @@ export const USAGE = `
   Options
     --backend <url>      the Brain to connect to
                          (default ${DEFAULT_BACKEND})
+    --mcp-url <url>      the MCP endpoint to point clients at
+                         (default: whatever the backend hands out)
+    --self-host          run the MCP server locally instead of dialling
+                         the hosted one — for self-hosting and CI
     --client <id>        configure only this client; repeatable
                          (${knownIds().join(", ")})
     --key <key>          skip the browser and use this key — for CI and
@@ -162,11 +183,14 @@ export async function main(argv: string[], version: string): Promise<number> {
     case "doctor":
       return doctor({
         backendUrl: parsed.backendUrl,
+        mcpUrl: parsed.mcpUrl,
         apiKey: parsed.apiKey,
       });
     case "connect":
       return connect({
         backendUrl: parsed.backendUrl,
+        mcpUrl: parsed.mcpUrl,
+        selfHost: parsed.selfHost,
         clients: parsed.clients,
         dryRun: parsed.dryRun,
         noBrowser: parsed.noBrowser,

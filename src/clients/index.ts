@@ -12,13 +12,17 @@ export {
   appSupport,
   type ClientTarget,
   knownIds,
+  type RemoteSpec,
   type ServerSpec,
+  type StdioSpec,
   targetById,
   targets,
+  type Transport,
   type Writer,
 } from "./targets.js";
 
 export {
+  BEARER_ENV_VAR,
   detect,
   install,
   inspect,

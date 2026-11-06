@@ -23,6 +23,7 @@
 
 import { hostname, userInfo } from "node:os";
 import {
+  BEARER_ENV_VAR,
   type ClientTarget,
   type Outcome,
   SERVER_PACKAGE,
@@ -60,11 +61,29 @@ import {
 /** The backend a plain `brain connect` talks to. */
 export const DEFAULT_BACKEND = "https://api.stg.arc-labs.ai";
 
+/**
+ * The hosted MCP endpoint used when the backend does not name its own.
+ *
+ * A fallback for `--key` installs only. The browser handoff gets the endpoint
+ * from the grant, because the deployment that issued the key is the one that
+ * knows where its MCP server lives — and a CLI that preferred this constant
+ * would quietly point a self-hosted user's editors at Arc Labs' staging.
+ */
+export const DEFAULT_MCP = "https://mcp.stg.arc-labs.ai/mcp";
+
 /** The MCP server name written into every client. */
 const SERVER_NAME = "brain";
 
 export type ConnectOptions = {
   backendUrl: string;
+  /** Override the MCP endpoint the clients are pointed at. */
+  mcpUrl: string | undefined;
+  /**
+   * Configure the stdio package to run locally instead of dialling a hosted
+   * server. For self-hosting and for CI, never the default — see
+   * {@link StdioSpec}.
+   */
+  selfHost: boolean;
   /** Restrict to these client ids. Empty means every detected client. */
   clients: string[];
   dryRun: boolean;
@@ -129,15 +148,13 @@ export async function connect(options: ConnectOptions): Promise<number> {
   );
   field("key", mask(grant.apiKey));
 
-  const spec: ServerSpec = {
-    name: SERVER_NAME,
-    command: "npx",
-    args: ["-y", SERVER_PACKAGE, "--stdio"],
-    env: {
-      BRAIN_MCP_BACKEND_URL: grant.backendUrl,
-      BRAIN_MCP_API_KEY: grant.apiKey,
-    },
-  };
+  const spec = specFor(grant, options);
+  field(
+    "server",
+    spec.transport === "http"
+      ? spec.url
+      : dim(`local — ${SERVER_PACKAGE} on this machine`),
+  );
 
   section(options.dryRun ? "would configure" : "configured");
   const outcomes: Outcome[] = present.map((t) => install(t, spec, options.dryRun));
@@ -171,14 +188,31 @@ export async function connect(options: ConnectOptions): Promise<number> {
     // clients rather than saying "your clients" — an MCP server is read at
     // start-up, so a configured client that is already running still knows
     // nothing about Brain.
-    nextSteps("next", [
-      `Restart ${configured.map((o) => o.client.label).join(" and ")}.`,
+    const steps = [`Restart ${configured.map((o) => o.client.label).join(" and ")}.`];
+
+    // Some clients store only the NAME of an environment variable to read the
+    // bearer token from, never the token — Codex is one. Their config is
+    // complete and they still cannot authenticate until the variable is
+    // exported, so this is the one place the key is printed in full: without
+    // it the install is finished, reports success, and does not work.
+    const needsExport = configured.filter((o) => usesBearerEnvVar(o.client));
+    if (needsExport.length > 0 && spec.transport === "http") {
+      steps.push(
+        "",
+        `${needsExport.map((o) => o.client.label).join(" and ")} read${needsExport.length === 1 ? "s" : ""} the key from your environment, so add this to your shell profile:`,
+        dim(`  export ${BEARER_ENV_VAR}=${spec.apiKey}`),
+      );
+    }
+
+    steps.push(
+      "",
       "Then ask your agent:",
       dim('  "remember that I prefer pnpm over npm"'),
       dim('  "what do you remember about my tooling?"'),
       "",
-      `${dim("Not working?")} brain doctor ${dim("runs the server and tells you why.")}`,
-    ]);
+      `${dim("Not working?")} brain doctor ${dim("calls the server and tells you why.")}`,
+    );
+    nextSteps("next", steps);
   }
 
   if (failed.length > 0) {
@@ -336,6 +370,50 @@ async function handoff(
   }
 }
 
+/**
+ * Whether this client authenticates from an environment variable rather than
+ * from something we can store for it.
+ *
+ * Keyed on the writer, because that is what decides it: the `cli` writer hands
+ * the job to the client's own `mcp add`, and the one we shell out to takes
+ * `--bearer-token-env-var` and nothing else.
+ */
+function usesBearerEnvVar(target: ClientTarget): boolean {
+  return target.writer.kind === "cli";
+}
+
+/**
+ * Decide what to point the clients at.
+ *
+ * Remote whenever there is an endpoint to dial, because that is the whole
+ * shape of this product: Brain hosts the MCP server, so a client holds a URL
+ * and a key and runs nothing. The local path exists for the two cases that
+ * genuinely need it — a self-hosted deployment, and `--self-host` — and is
+ * never chosen by default.
+ */
+export function specFor(grant: Grant, options: ConnectOptions): ServerSpec {
+  const url = options.mcpUrl ?? grant.mcpUrl;
+  if (!options.selfHost && url) {
+    return {
+      transport: "http",
+      name: SERVER_NAME,
+      url,
+      apiKey: grant.apiKey,
+      backendUrl: grant.backendUrl,
+    };
+  }
+  return {
+    transport: "stdio",
+    name: SERVER_NAME,
+    command: "npx",
+    args: ["-y", SERVER_PACKAGE, "--stdio"],
+    env: {
+      BRAIN_MCP_BACKEND_URL: grant.backendUrl,
+      BRAIN_MCP_API_KEY: grant.apiKey,
+    },
+  };
+}
+
 /** A grant assembled from `--key`, for CI and headless machines. */
 function directGrant(options: ConnectOptions): Grant | number {
   if (!options.namespace) {
@@ -350,6 +428,10 @@ function directGrant(options: ConnectOptions): Grant | number {
     namespace: options.namespace,
     space: undefined,
     backendUrl: options.backendUrl,
+    // With no handoff there is no grant to read the endpoint from, so this is
+    // the one place a default is right. `--mcp-url` still wins, which is how a
+    // self-hosted CI run points at its own server.
+    mcpUrl: DEFAULT_MCP,
   };
 }
 

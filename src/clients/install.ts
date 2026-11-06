@@ -7,8 +7,24 @@ import { WriteError, mergeServer, readServer } from "./json.js";
 import { available, jsonFrom, looksUnsupported, reasonFrom, run } from "./run.js";
 import type { ClientTarget, ServerSpec } from "./targets.js";
 
-/** The npm spec written into every client config. */
+/**
+ * The npm package run by a **self-hosted** install.
+ *
+ * Only reached on the stdio path. The normal install writes a remote server
+ * and runs nothing locally.
+ */
 export const SERVER_PACKAGE = "@brain-db/mcp";
+
+/**
+ * The environment variable Codex reads a bearer token from.
+ *
+ * `codex mcp add --url` accepts `--bearer-token-env-var <NAME>` and has no
+ * option for a literal token: its config stores the variable's NAME, and the
+ * token is read from the environment at launch. So this is not a stylistic
+ * choice about where to keep the key — it is the only thing that client
+ * supports, and the user has to export it.
+ */
+export const BEARER_ENV_VAR = "BRAIN_API_KEY";
 
 /** The Claude Code marketplace and plugin this installs. */
 export const MARKETPLACE = "arc-labs";
@@ -41,6 +57,21 @@ export function install(
   dryRun: boolean,
 ): Outcome {
   const writer = target.writer;
+
+  // Can this client even express this transport? Asked before anything is
+  // written, because the answer for Claude Code is "yes" and the answer for
+  // Claude Desktop is "no, and writing it anyway loses your other servers".
+  if (!target.transports.includes(spec.transport)) {
+    const step = target.manual?.(spec);
+    return {
+      client: target,
+      status: "skipped",
+      detail: step
+        ? `cannot be configured for ${spec.transport} from a config file — ${step}`
+        : `does not support ${spec.transport} servers`,
+    };
+  }
+
   if (dryRun) {
     const where =
       writer.kind === "json"
@@ -63,11 +94,13 @@ export function install(
 /** Merge the server into a JSON config. */
 function viaJson(target: ClientTarget, path: string, spec: ServerSpec): Outcome {
   try {
-    const result = mergeServer(path, spec.name, {
-      command: spec.command,
-      args: spec.args,
-      env: spec.env,
-    });
+    const result = mergeServer(
+      path,
+      spec.name,
+      spec.transport === "http"
+        ? { url: spec.url, headers: { Authorization: `Bearer ${spec.apiKey}` } }
+        : { command: spec.command, args: spec.args, env: spec.env },
+    );
     return {
       client: target,
       status: "configured",
@@ -91,10 +124,16 @@ function viaCli(target: ClientTarget, bin: string, spec: ServerSpec): Outcome {
   run(bin, ["mcp", "remove", spec.name], { timeoutMs: 20_000 });
 
   const args = ["mcp", "add", spec.name];
-  for (const [key, value] of Object.entries(spec.env)) {
-    args.push("--env", `${key}=${value}`);
+  if (spec.transport === "http") {
+    // No literal token: this client has no option for one. The key never
+    // reaches its config file or this argv — only the variable's name does.
+    args.push("--url", spec.url, "--bearer-token-env-var", BEARER_ENV_VAR);
+  } else {
+    for (const [key, value] of Object.entries(spec.env)) {
+      args.push("--env", `${key}=${value}`);
+    }
+    args.push("--", spec.command, ...spec.args);
   }
-  args.push("--", spec.command, ...spec.args);
 
   const result = run(bin, args);
   if (result.missing) {
@@ -113,7 +152,14 @@ function viaCli(target: ClientTarget, bin: string, spec: ServerSpec): Outcome {
         : reasonFrom(result),
     };
   }
-  return { client: target, status: "configured", detail: `via \`${bin} mcp add\`` };
+  return {
+    client: target,
+    status: "configured",
+    detail:
+      spec.transport === "http"
+        ? `via \`${bin} mcp add --url\` — reads the key from $${BEARER_ENV_VAR}`
+        : `via \`${bin} mcp add\``,
+  };
 }
 
 /**
@@ -143,7 +189,7 @@ function viaPlugin(target: ClientTarget, bin: string, spec: ServerSpec): Outcome
     };
   }
 
-  const shadow = clearShadowingServer(bin, spec.name);
+  const shadow = clearShadowingServer(bin, spec.name, spec);
   if (shadow === "foreign") {
     return {
       client: target,
@@ -205,10 +251,8 @@ function storePluginConfig(
   id: string,
   spec: ServerSpec,
 ): { status: "configured" | "failed"; detail: string } {
-  const values = JSON.stringify({
-    api_key: spec.env.BRAIN_MCP_API_KEY ?? "",
-    backend_url: spec.env.BRAIN_MCP_BACKEND_URL ?? "",
-  });
+  const config = pluginConfig(spec);
+  const values = JSON.stringify(config);
 
   const piped = run(bin, ["plugin", "configure", id, "--values-stdin"], {
     input: `${values}\n`,
@@ -224,10 +268,7 @@ function storePluginConfig(
     "plugin",
     "install",
     id,
-    "--config",
-    `api_key=${spec.env.BRAIN_MCP_API_KEY ?? ""}`,
-    "--config",
-    `backend_url=${spec.env.BRAIN_MCP_BACKEND_URL ?? ""}`,
+    ...Object.entries(config).flatMap(([key, value]) => ["--config", `${key}=${value}`]),
     "--json",
   ]);
   return viaArgs.code === 0
@@ -240,16 +281,39 @@ function storePluginConfig(
 }
 
 /**
+ * The `userConfig` values the plugin manifest substitutes into its server.
+ *
+ * The manifest declares an HTTP server whose `url` and `Authorization` header
+ * are both `${user_config.…}` references, so these two values ARE the server:
+ * the endpoint is stored rather than baked into the manifest, which is what
+ * lets one published plugin serve staging, production and somebody's own
+ * deployment. `backend_url` is carried for the skills, which cite it when
+ * telling someone where their memories live.
+ */
+function pluginConfig(spec: ServerSpec): Record<string, string> {
+  return spec.transport === "http"
+    ? { api_key: spec.apiKey, mcp_url: spec.url, backend_url: spec.backendUrl }
+    : {
+        api_key: spec.env.BRAIN_MCP_API_KEY ?? "",
+        backend_url: spec.env.BRAIN_MCP_BACKEND_URL ?? "",
+      };
+}
+
+/**
  * Remove a user-scoped MCP server that would shadow the plugin.
  *
  * Returns what it found: `none`, `removed` (it was ours), or `foreign` (it was
  * not, and deleting someone else's configuration is not this tool's call).
  */
-function clearShadowingServer(bin: string, name: string): "none" | "removed" | "foreign" {
+function clearShadowingServer(
+  bin: string,
+  name: string,
+  spec: ServerSpec,
+): "none" | "removed" | "foreign" {
   const listed = run(bin, ["mcp", "list", "--json"], { timeoutMs: 30_000 });
   const entry = findServer(jsonFrom(listed), name);
   if (!entry) return "none";
-  if (!isOurs(entry)) return "foreign";
+  if (!isOurs(entry, spec)) return "foreign";
   const removed = run(bin, ["mcp", "remove", name, "-s", "user"], {
     timeoutMs: 20_000,
   });
@@ -267,6 +331,7 @@ function clearShadowingServer(bin: string, name: string): "none" | "removed" | "
 type ListedServer = {
   readonly command?: string;
   readonly args?: readonly string[];
+  readonly url?: string;
 };
 
 /** Either `{ "<name>": {…} }` or `{ servers: { "<name>": {…} } }`. */
@@ -284,7 +349,8 @@ function asListedServer(value: unknown): ListedServer | undefined {
   const args = Array.isArray(value.args)
     ? value.args.filter((a): a is string => typeof a === "string")
     : undefined;
-  return { command, args };
+  const url = typeof value.url === "string" ? value.url : undefined;
+  return { command, args, url };
 }
 
 /** The named server out of a client's `--json` listing. */
@@ -303,8 +369,15 @@ function findServer(parsed: unknown, name: string): ListedServer | undefined {
  * and getting this wrong in the permissive direction means deleting a server
  * somebody else configured.
  */
-function isOurs(entry: ListedServer | undefined): boolean {
+function isOurs(entry: ListedServer | undefined, spec: ServerSpec): boolean {
   if (!entry) return false;
+  // A remote server is ours when it points at the endpoint we are installing.
+  // Checked against the resolved spec rather than a compiled-in hostname, so a
+  // developer's own deployment is recognised as theirs instead of being
+  // reported as a stranger's server they have to go and delete by hand.
+  if (entry.url && spec.transport === "http") {
+    return entry.url.replace(/\/+$/, "") === spec.url.replace(/\/+$/, "");
+  }
   const text = [entry.command ?? "", ...(entry.args ?? [])].join(" ");
   return text.includes(SERVER_PACKAGE);
 }

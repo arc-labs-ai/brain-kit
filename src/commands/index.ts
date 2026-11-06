@@ -10,7 +10,9 @@ export {
   connect,
   type ConnectOptions,
   DEFAULT_BACKEND,
+  DEFAULT_MCP,
   defaultMachineName,
+  specFor,
 } from "./connect.js";
 
 export { doctor, type DoctorOptions } from "./doctor.js";

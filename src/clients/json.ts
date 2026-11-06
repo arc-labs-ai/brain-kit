@@ -19,12 +19,20 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
-/** An MCP server entry, as every one of these files spells it. */
-export type ServerEntry = {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-};
+/**
+ * An MCP server entry, as these files spell it.
+ *
+ * Two shapes, because there are two transports. A remote entry is `url` plus
+ * `headers`: that is the spelling Cursor and Windsurf both document, and
+ * neither needs a transport discriminator — a URL-shaped entry is streamable
+ * HTTP by default in both. A local entry is the familiar `command`/`args`/`env`.
+ *
+ * Note which key is NOT here: `serverUrl`. Older Windsurf material used it and
+ * the current format does not.
+ */
+export type ServerEntry =
+  | { url: string; headers: Record<string, string> }
+  | { command: string; args: string[]; env: Record<string, string> };
 
 /** What a write did. */
 export type WriteResult = {
@@ -164,5 +172,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function isServerEntry(value: unknown): value is ServerEntry {
   const record = asRecord(value);
-  return !!record && typeof record.command === "string" && Array.isArray(record.args);
+  if (!record) return false;
+  // Either shape counts as configured. Recognising only the local one is how
+  // `doctor` came to report a perfectly good remote server as missing.
+  if (typeof record.url === "string") return true;
+  return typeof record.command === "string" && Array.isArray(record.args);
 }

@@ -50,6 +50,15 @@ export type Grant = {
   namespace: string;
   space: string | undefined;
   backendUrl: string;
+  /**
+   * The hosted MCP endpoint, when the issuing deployment runs one.
+   *
+   * `undefined` means it does not, and the install falls back to running the
+   * stdio package locally. There is deliberately NO default here: a guessed
+   * endpoint would point this machine's editors at somebody else's
+   * deployment, and would do it while reporting success.
+   */
+  mcpUrl: string | undefined;
 };
 
 /**
@@ -489,6 +498,7 @@ type GrantWire = {
   namespace: string;
   space?: string | null;
   backend_url?: string;
+  mcp_url?: string;
 };
 
 /** A field-level validation failure, named for the message it produces. */
@@ -551,6 +561,7 @@ export function parseGrant(body: unknown, fallbackBackend: string): Grant {
     namespace: requireString(raw, "namespace"),
     space: optionalString(raw, "space"),
     backend_url: optionalString(raw, "backend_url"),
+    mcp_url: optionalString(raw, "mcp_url"),
   };
   return {
     apiKey: wire.api_key,
@@ -560,6 +571,10 @@ export function parseGrant(body: unknown, fallbackBackend: string): Grant {
     // we dialled is correct and not a guess, since that is the deployment that
     // issued the key.
     backendUrl: wire.backend_url ?? fallbackBackend,
+    // No fallback, on purpose — see `Grant.mcpUrl`. An absent endpoint is a
+    // deployment that hosts no MCP server, which is a real configuration and
+    // not a gap to paper over.
+    mcpUrl: wire.mcp_url,
   };
 }
 

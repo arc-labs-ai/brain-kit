@@ -8,10 +8,14 @@ npx @brain-db/cli
 ```
 
 It opens your browser, asks you to confirm a code shown in your terminal, and
-configures every MCP client it finds — the Brain MCP server, the Claude Code
-plugin, and the skills that tell an agent *when* memory is worth writing. No
-key is copied by hand, and nothing is written until a real credential is in
-hand.
+configures every MCP client it finds — pointing each at **Brain's hosted MCP
+server**, installing the Claude Code plugin, and dropping in the skills that
+tell an agent *when* memory is worth writing. No key is copied by hand, and
+nothing is written until a real credential is in hand.
+
+Your machine runs no MCP server. A client holds a URL and your key and dials
+the hosted endpoint, so there is nothing to install, nothing to keep up to
+date, and a fix reaches you without a reinstall.
 
 ```
   brain connect
@@ -19,7 +23,7 @@ hand.
 
   backend    https://api.stg.arc-labs.ai
   machine    your-laptop
-  clients    Claude Code, Codex CLI, Claude Desktop
+  clients    Claude Code, Codex CLI, Cursor, Claude Desktop
 
   approve
     Your browser will ask you to confirm the code below. Approving creates
@@ -36,32 +40,56 @@ hand.
   granted
   namespace  acme / default
   key        brain_live_…  (not shown)
+  server     https://mcp.stg.arc-labs.ai/mcp
 
   configured
     ✓ Claude Code       plugin brain installed, key in your keychain
-    ✓ Codex CLI         via `codex mcp add`
-    ✓ Claude Desktop    …/claude_desktop_config.json
+    ✓ Codex CLI         via `codex mcp add --url` — reads the key from $BRAIN_API_KEY
+    ✓ Cursor            added ~/.cursor/mcp.json
+    – Claude Desktop    cannot be configured for http from a config file —
+                        add it in Settings → Connectors → Add custom connector
     ✓ skill: brain-memory  ~/.agents/skills/brain-memory
 
   next
-    Restart Claude Code and Codex CLI and Claude Desktop.
+    Restart Claude Code and Codex CLI and Cursor.
+
+    Codex CLI reads the key from your environment, so add this to your
+    shell profile:
+      export BRAIN_API_KEY=brain_live_…
+
     Then ask your agent:
       "remember that I prefer pnpm over npm"
       "what do you remember about my tooling?"
 ```
 
-## What it is, and what `@brain-db/mcp` is
+## How a client reaches Brain
 
-Two packages, two jobs:
+Brain hosts the MCP server. The normal install writes a **remote** server into
+each client — an endpoint and your key as a bearer — and starts no local
+process:
 
 | | |
 |---|---|
 | **`@brain-db/cli`** (this repo) | Sets a machine up. One-shot, interactive, opens a browser. |
-| **`@brain-db/mcp`** | The MCP server an agent starts on every cold start. You do not install it directly; this configures it. |
+| **Brain's hosted MCP server** | What your clients actually talk to, over Streamable HTTP. Nothing to install. |
+| **`@brain-db/mcp`** | The same server as a package, for **self-hosting**. Used only when your deployment runs no MCP server of its own, or when you pass `--self-host`. |
 
-They are separate because their lifecycles are opposite. The installer can
-change freely — every run is somebody's first. The server is on the hot path
-and should do nothing but speak the protocol.
+The endpoint is **handed out by the backend that issues your key**, not
+compiled in here. A CLI cannot derive it from the API base — they are different
+hosts — and a guessed one would point your editors at somebody else's
+deployment while reporting success.
+
+### The clients are not interchangeable
+
+Each client's config format decides what can be written, and the differences
+are invisible until something quietly fails:
+
+| Client | How it is configured |
+|---|---|
+| Claude Code | The **plugin**, which carries the server *and* the skills. The key goes in your OS keychain. |
+| Codex CLI | `codex mcp add --url`. It stores only the **name** of an env var to read the token from, never the token — so you must export `BRAIN_API_KEY`. |
+| Cursor, Windsurf | `{ "url": …, "headers": { "Authorization": … } }`, written `0600`. |
+| Claude Desktop | **Not automatic.** Its config file takes stdio servers only, and a `url` entry there has been reported to make it rewrite the file and drop every other server on restart. The installer skips it and prints the Connectors step instead. |
 
 ## The code, and why you are asked for it
 
@@ -82,12 +110,13 @@ started no CLI has nothing to type.
 npx @brain-db/cli doctor
 ```
 
-`doctor` does not read config files and tell you they look right. It **starts
-the server and counts the tools that come back**:
+`doctor` does not read config files and tell you they look right. It takes the
+endpoint and key out of a real client's config, **completes an MCP handshake
+against them, and counts the tools that come back**:
 
 ```
   brain doctor
-  Reads what is configured, then runs it. The two are not the same thing.
+  Reads what is configured, then actually calls it. The two are not the same thing.
 
   clients
     ✓ Claude Code        plugin brain@arc-labs
@@ -95,21 +124,33 @@ the server and counts the tools that come back**:
     – Cursor             not installed on this machine
 
   server
-    ✓ handshake          brain-mcp 0.4.0 answered with 49 tools
+    ✓ handshake          brain-mcp 0.3.2 answered with 49 tools — https://mcp.stg.arc-labs.ai/mcp
 
   verdict
     Working. Every client on this machine is set up.
 ```
 
-That is not belt-and-braces. Two real bugs shipped in the predecessor to this
-package and **neither was visible in any configuration file**:
+When it fails it says which half failed, because the remedies are different:
 
-1. The server's entrypoint guard compared `import.meta.url` against
+```
+    ✗ handshake   the key was rejected (401) — it may have been revoked; run brain connect again
+    ✗ handshake   no MCP server at that URL (404) — check the endpoint path
+    ✗ handshake   could not reach it: nothing is listening there
+```
+
+That is not belt-and-braces. Three real bugs shipped here and **not one was
+visible in any configuration file**:
+
+1. Every client was configured to run the server **locally** over stdio, when
+   Brain hosts one. Every config was valid, every install reported success —
+   and each user paid a cold `npx` (~1.3s) to start whatever build their own
+   machine last fetched.
+2. The server's entrypoint guard compared `import.meta.url` against
    `` file://${process.argv[1]} ``, which never matches when npm installs the
    bin as a **symlink**. The process started, matched nothing, ran no server,
    and exited **0**. Clients reported a closed connection; every install step
    had reported success.
-2. A user-scoped MCP server **shadows a plugin's server of the same name**.
+3. A user-scoped MCP server **shadows a plugin's server of the same name**.
    Installing both left the plugin enabled, its skill loading, its key unused
    in the keychain — and a different server answering.
 
