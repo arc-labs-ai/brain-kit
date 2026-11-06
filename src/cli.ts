@@ -182,6 +182,7 @@ export async function main(argv: string[], version: string): Promise<number> {
       return 0;
     case "doctor":
       return doctor({
+        version,
         backendUrl: parsed.backendUrl,
         mcpUrl: parsed.mcpUrl,
         apiKey: parsed.apiKey,

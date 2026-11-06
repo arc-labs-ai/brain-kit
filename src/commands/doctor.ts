@@ -38,6 +38,16 @@ import {
 import { dim, field, heading, item, nextSteps, problem, say, section } from "../ui.js";
 
 export type DoctorOptions = {
+  /**
+   * This package's version, reported to the server as the client's.
+   *
+   * Threaded in rather than hardcoded here. It was hardcoded twice in this
+   * file, as "1" and as "0.1.0" — two different answers for one client, and
+   * the second silently wrong from the first release that moved past it. A
+   * server that logs client versions to decide what to support deserves a
+   * true one.
+   */
+  version: string;
   backendUrl: string | undefined;
   /** Probe this endpoint instead of the one found in a client's config. */
   mcpUrl: string | undefined;
@@ -99,7 +109,7 @@ export async function doctor(options: DoctorOptions): Promise<number> {
     return configuredCount > 0 ? 0 : 1;
   }
 
-  const probe = await handshake(credential);
+  const probe = await handshake(credential, options.version);
   if (!probe.ok) {
     item("fail", "handshake", `${probe.detail} — ${describe(credential)}`);
     problem(
@@ -286,10 +296,10 @@ type Probe = { ok: true; server: string; tools: number } | { ok: false; detail: 
  * retries, it reframes a dead process as a transport error, and the bug this
  * check exists for is a process that exits 0 and says nothing.
  */
-function handshake(credential: Credential): Promise<Probe> {
+function handshake(credential: Credential, version: string): Promise<Probe> {
   return credential.kind === "remote"
-    ? handshakeRemote(credential.url, credential.apiKey)
-    : handshakeLocal(credential);
+    ? handshakeRemote(credential.url, credential.apiKey, version)
+    : handshakeLocal(credential, version);
 }
 
 /**
@@ -305,7 +315,11 @@ function handshake(credential: Credential): Promise<Probe> {
  * JSON, and the session id it returns in `Mcp-Session-Id` has to be echoed on
  * every later request or the server rejects them as un-initialised.
  */
-async function handshakeRemote(url: string, apiKey: string): Promise<Probe> {
+async function handshakeRemote(
+  url: string,
+  apiKey: string,
+  version: string,
+): Promise<Probe> {
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), 30_000);
   try {
@@ -332,7 +346,7 @@ async function handshakeRemote(url: string, apiKey: string): Promise<Probe> {
         params: {
           protocolVersion: "2025-06-18",
           capabilities: {},
-          clientInfo: { name: "brain-doctor", version: "1" },
+          clientInfo: { name: "brain-doctor", version },
         },
       },
       undefined,
@@ -460,10 +474,10 @@ async function readRpc(response: Response): Promise<unknown> {
 }
 
 /** Spawn the stdio package and complete a real handshake. */
-function handshakeLocal(credential: {
-  apiKey: string;
-  backendUrl: string;
-}): Promise<Probe> {
+function handshakeLocal(
+  credential: { apiKey: string; backendUrl: string },
+  version: string,
+): Promise<Probe> {
   return new Promise((resolve) => {
     const child = spawn("npx", ["-y", SERVER_PACKAGE, "--stdio"], {
       env: {
@@ -562,7 +576,7 @@ function handshakeLocal(credential: {
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "brain-doctor", version: "0.1.0" },
+        clientInfo: { name: "brain-doctor", version },
       },
     });
   });
