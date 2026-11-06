@@ -25,6 +25,8 @@ export type RunResult = {
   stderr: string;
   /** The binary is not on PATH. */
   missing: boolean;
+  /** It ran but was killed at the deadline. */
+  timedOut: boolean;
 };
 
 /** Run `bin` with `args`, capturing output. Never throws. */
@@ -35,6 +37,14 @@ export function run(
 ): RunResult {
   const result = spawnSync(bin, args, {
     encoding: "utf8",
+    env: {
+      ...process.env,
+      // A `git clone` of a repository that does not exist will otherwise sit
+      // waiting for a username on a terminal nobody is watching, and the
+      // child burns the whole timeout before reporting anything useful.
+      GIT_TERMINAL_PROMPT: "0",
+      GCM_INTERACTIVE: "never",
+    },
     timeout: options?.timeoutMs ?? 60_000,
     input: options?.input,
     // Inherit nothing: a child that inherits this process's stdio can print
@@ -42,14 +52,19 @@ export function run(
     // waiting for input nobody is going to type.
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const missing =
-    result.error !== undefined &&
-    (result.error as NodeJS.ErrnoException).code === "ENOENT";
+  const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  const missing = result.error !== undefined && code === "ENOENT";
+  // `spawnSync` reports a deadline kill as a signal plus an ETIMEDOUT error.
+  // Without this a hung child is indistinguishable from one that failed, and
+  // `reasonFrom` reports whatever it had printed so far — which for a command
+  // that draws progress is a spinner frame, not a reason.
+  const timedOut = code === "ETIMEDOUT" || result.signal === "SIGTERM";
   return {
     code: missing ? undefined : (result.status ?? undefined),
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
     missing,
+    timedOut,
   };
 }
 
@@ -66,10 +81,21 @@ export function available(bin: string): boolean {
  * dump is "Usage:".
  */
 export function reasonFrom(result: RunResult): string {
+  if (result.timedOut) return "timed out";
   const lines = `${result.stderr}\n${result.stdout}`
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith("Usage:"));
+    // Progress chatter is not a reason. A command that draws its own spinner
+    // leaves lines like "Adding marketplace…" as the last thing it printed,
+    // and reporting that as the failure told the reader nothing at all.
+    .filter(
+      (l) =>
+        l.length > 0 &&
+        !l.startsWith("Usage:") &&
+        !l.endsWith("…") &&
+        !l.endsWith("...") &&
+        !/^[\s.·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\\-]+$/.test(l),
+    );
   const last = lines.at(-1);
   if (!last) return `exited ${result.code ?? "without running"}`;
   // Bounded: another tool's output is not a format we control.

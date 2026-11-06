@@ -309,30 +309,74 @@ function isOurs(entry: ListedServer | undefined): boolean {
   return text.includes(SERVER_PACKAGE);
 }
 
-/** Register the marketplace, replacing a stale one. Returns a failure message. */
+/**
+ * Make sure the marketplace is registered and points where we expect.
+ *
+ * Returns a failure message, or `undefined` when it is ready.
+ *
+ * ## Why this reads the list instead of the add's output
+ *
+ * The first version ran `marketplace add` and, on failure, decided whether it
+ * was already registered by looking for "already" or "exists" in the output.
+ * The error for a repository that does not exist is:
+ *
+ *     Please make sure you have the correct access rights
+ *     and the repository exists.
+ *
+ * — which contains "exists". So a MISSING repo read as "already registered",
+ * and the next step was `marketplace remove`, which uninstalls every plugin
+ * from that marketplace and deletes its stored secrets. A substring match on
+ * somebody else's prose decided whether to run a destructive command.
+ *
+ * `marketplace list --json` answers the question directly.
+ */
 function ensureMarketplace(bin: string): string | undefined {
-  const added = run(bin, ["plugin", "marketplace", "add", MARKETPLACE_SOURCE]);
-  if (added.code === 0) return undefined;
+  const registered = findMarketplace(bin, MARKETPLACE);
 
-  const text = `${added.stderr} ${added.stdout}`.toLowerCase();
-  const alreadyThere = text.includes("already") || text.includes("exists");
-  if (!alreadyThere) return reasonFrom(added);
+  if (registered === "ours") return undefined;
 
-  // Already registered. Re-point it, in case it is an older source — the
-  // plugin used to ship from the MCP server's own repo, and that source stops
-  // resolving the moment this repo's copy becomes the real one.
-  //
-  // `marketplace remove` is DESTRUCTIVE: it also uninstalls every plugin from
-  // that marketplace and deletes their saved options and secrets. Verified,
-  // not assumed — it says so when it runs. That is acceptable only because
-  // the install and the credential write both follow unconditionally; never
-  // reorder this so a configure-only path can run after a remove, or the key
-  // is simply gone.
-  run(bin, ["plugin", "marketplace", "remove", MARKETPLACE], {
-    timeoutMs: 20_000,
+  if (registered === "foreign") {
+    // Registered, but from somewhere else — a local checkout, or an older
+    // source. Re-pointing means `marketplace remove`, which UNINSTALLS the
+    // plugins from it and deletes their secrets. That is not a call to make
+    // silently on somebody's behalf.
+    return `a marketplace called "${MARKETPLACE}" is already registered from somewhere else. Re-pointing it would uninstall its plugins and delete their stored options, so it is left alone — remove it yourself if you want ${MARKETPLACE_SOURCE}.`;
+  }
+
+  const added = run(bin, ["plugin", "marketplace", "add", MARKETPLACE_SOURCE], {
+    timeoutMs: 120_000,
   });
-  const readded = run(bin, ["plugin", "marketplace", "add", MARKETPLACE_SOURCE]);
-  return readded.code === 0 ? undefined : reasonFrom(readded);
+  if (added.code === 0) return undefined;
+  if (added.timedOut) {
+    return `adding the ${MARKETPLACE} marketplace timed out — check your network, or add it yourself with \`${bin} plugin marketplace add ${MARKETPLACE_SOURCE}\``;
+  }
+  return reasonFrom(added);
+}
+
+/** Whether `name` is registered, and whether it points at our source. */
+function findMarketplace(bin: string, name: string): "ours" | "foreign" | "absent" {
+  const listed = run(bin, ["plugin", "marketplace", "list", "--json"], {
+    timeoutMs: 30_000,
+  });
+  const parsed = jsonFrom(listed);
+  if (!Array.isArray(parsed)) {
+    // Cannot tell. Treat as absent and let `add` decide — it refuses a
+    // duplicate name, which is a safe failure. Guessing "foreign" here would
+    // refuse to install on every machine whose CLI predates `--json`.
+    return "absent";
+  }
+  const entry = parsed.find(
+    (m): m is Record<string, unknown> =>
+      typeof m === "object" && m !== null && (m as { name?: unknown }).name === name,
+  );
+  if (!entry) return "absent";
+  // A GitHub marketplace reports `repo`; one added from a checkout reports
+  // `path`. Both are "ours" when they name the source we would add — which is
+  // how a developer working from a local clone avoids being told their own
+  // marketplace belongs to somebody else.
+  return entry.repo === MARKETPLACE_SOURCE || entry.path === MARKETPLACE_SOURCE
+    ? "ours"
+    : "foreign";
 }
 
 /** What `target` currently has configured, for `doctor`. */
