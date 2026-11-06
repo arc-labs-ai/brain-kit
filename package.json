@@ -1,0 +1,63 @@
+{
+  "name": "@brain-db/cli",
+  "version": "0.1.0",
+  "description": "One command to connect your agents to Brain: MCP servers, skills and the Claude Code plugin, configured across every client on the machine.",
+  "license": "Apache-2.0",
+  "author": "Niraj Georgian",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "brain": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "plugins",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arc-labs-ai/brain-kit.git"
+  },
+  "homepage": "https://github.com/arc-labs-ai/brain-kit#readme",
+  "bugs": {
+    "url": "https://github.com/arc-labs-ai/brain-kit/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "brain",
+    "mcp",
+    "agent-skills",
+    "claude-code",
+    "codex",
+    "cursor",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.12"
+  }
+}
