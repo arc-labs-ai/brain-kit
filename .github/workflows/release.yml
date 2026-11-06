@@ -109,15 +109,49 @@ jobs:
           echo "tag=$TAG package=$VER"
           test "$TAG" = "$VER" || { echo "::error::tag $TAG != package version $VER"; exit 1; }
 
-      - run: npm ci
+      # Is this version already on npm?
+      #
+      # WHY. There are now three ways into this workflow — a tag push, a
+      # `workflow_call` from release-please, and a manual dispatch — and with
+      # `RELEASE_PLEASE_TOKEN` set, the first two BOTH fire for the same
+      # release. Without this check the second one reaches `npm publish`,
+      # which refuses a version that already exists, and a release that
+      # actually shipped ends in a red run. People then learn to ignore a red
+      # release workflow, which is worse than the duplicate.
+      #
+      # So a version that is already published is a SUCCESS, not an error:
+      # the desired state is "this version is on npm", and it is.
+      #
+      # `npm view` exits non-zero for a package or version that does not
+      # exist, which is the normal first-publish case, hence `|| true`.
+      - name: Skip if this version is already published
+        id: published
+        run: |
+          set -uo pipefail
+          VER="$(node -p "require('./package.json').version")"
+          NAME="$(node -p "require('./package.json').name")"
+          FOUND="$(npm view "$NAME@$VER" version 2>/dev/null || true)"
+          if [ "$FOUND" = "$VER" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME@$VER is already on npm - nothing to publish."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VER is not on npm yet - publishing."
+          fi
+
+      - if: steps.published.outputs.already != 'true'
+        run: npm ci
 
       - name: Test
+        if: steps.published.outputs.already != 'true'
         run: npm test
 
       - name: Build
+        if: steps.published.outputs.already != 'true'
         run: npm run build
 
       # OIDC trusted publishing: no NODE_AUTH_TOKEN. npm detects the trusted
       # publisher and attaches provenance automatically.
       - name: Publish
+        if: steps.published.outputs.already != 'true'
         run: npm publish
