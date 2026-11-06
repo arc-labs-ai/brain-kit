@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # `package.json` says `engines.node >= 20`. Testing one version leaves
+        # that claim unverified, which is how a floor quietly stops being true.
+        # The ends are what matter — the floor we advertise and the newest
+        # release — plus one in between.
+        #
+        # This package is run by `npx` on other people's machines, so the floor
+        # is not a formality: it is whatever Node a stranger happens to have.
+        node-version: ["20", "22", "24"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Production scope only. This package has ZERO runtime dependencies on
+      # purpose — `npx @brain-db/cli` downloads and starts it before it can do
+      # anything useful — so this gate should stay trivially green, and it
+      # going red means a dependency was added to the hot path.
+      - name: Audit dependencies (production)
+        run: npm audit --omit=dev --audit-level=high
+
+      # Second tier, whole tree including dev. `critical` rather than `high`
+      # because the dev chain churns — vite and esbuild publish dev-server
+      # advisories that never apply to a `vitest run` in CI — and a gate that
+      # goes red for reasons nobody here can act on is a gate nobody reads.
+      - name: Audit dependencies (whole tree)
+        run: npm audit --audit-level=critical
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `pretest` builds first, deliberately: the entrypoint test asserts how
+      # the SHIPPED artifact behaves when invoked, and without a build it would
+      # prove nothing. That is also what catches the executable bit `tsc`
+      # strips from `dist/bin.js` — a failure a client only ever reports as
+      # "Connection closed".
+      - name: Test
+        run: npm test
+
+      # Proves `dist/` compiles — the only thing `files` actually ships.
+      - name: Build
+        run: npm run build
+
+  # The symlink is load-bearing and silently degradable, so it is checked
+  # rather than trusted.
+  #
+  # `clients/claude-code/skills` points at the shared `skills/` directory
+  # because a plugin's `skills` field must start with `./` and cannot escape
+  # the plugin root — so the alternative is five divergent copies. If git ever
+  # records it as a regular file instead of mode 120000, the plugin ships a
+  # one-line text file where a directory should be, every skill silently
+  # disappears from the plugin, and the tools arrive with none of the
+  # knowledge of when to use them.
+  symlink:
+    name: the shared skills are still a symlink
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: clients/claude-code/skills is mode 120000
+        run: |
+          set -euo pipefail
+          mode=$(git ls-files -s clients/claude-code/skills | awk '{print $1}')
+          echo "mode=$mode"
+          test "$mode" = "120000" || {
+            echo "::error::clients/claude-code/skills is $mode, not a symlink (120000)."
+            exit 1
+          }
+
+      - name: every skill resolves through it
+        run: |
+          set -euo pipefail
+          missing=0
+          for d in skills/*/; do
+            name=$(basename "$d")
+            if [ ! -f "clients/claude-code/skills/$name/SKILL.md" ]; then
+              echo "::error::skills/$name does not resolve through the plugin symlink"
+              missing=1
+            fi
+          done
+          test "$missing" = "0"
+          echo "all $(ls -1d skills/*/ | wc -l | tr -d ' ') skills resolve"
