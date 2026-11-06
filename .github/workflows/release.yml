@@ -54,6 +54,25 @@ on:
         required: true
         type: string
 
+  # Called by `release-please.yml` IN THE SAME RUN, which is what removes the
+  # need for a PAT.
+  #
+  # The recursion guard only suppresses NEW events raised with the default
+  # `GITHUB_TOKEN` — a tag push is such an event, a job in the same run is not.
+  # So release-please can hand the publish straight to this workflow and no
+  # `RELEASE_PLEASE_TOKEN` has to exist, be stored, or be rotated.
+  #
+  # The split the comment above describes is preserved, because it is a split
+  # between JOBS and not between files: the third-party release-please action
+  # runs in a job with no `id-token: write`, and this job, which holds the
+  # publish identity, runs no third-party action.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag just created by release-please."
+        required: true
+        type: string
+
 # No repo-wide write; the job opts into `id-token: write` for OIDC.
 permissions:
   contents: read

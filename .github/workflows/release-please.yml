@@ -14,9 +14,11 @@ name: Release Please
 # registry until that PR is merged and the publish workflow's `release`
 # environment gate is passed.
 #
-# This workflow deliberately does NOT publish and holds no registry
-# credentials. `release.yml` does that over OIDC; keeping a third-party action
-# out of the job that holds the publish identity is the point of the split.
+# This workflow's release-please JOB deliberately does not publish and holds no
+# registry credentials. `release.yml` does that over OIDC, and this workflow
+# now calls it directly once a release is cut — keeping the third-party action
+# out of the job that holds the publish identity, which is the point of the
+# split, while removing the PAT that a tag-triggered publish would need.
 
 on:
   push:
@@ -41,9 +43,43 @@ jobs:
       # Create the tag + GitHub Release on merge, and open/update the PR.
       contents: write
       pull-requests: write
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Publish the tag this run just created.
+  #
+  # WHY THIS EXISTS. Merging the Release PR creates the tag, and `release.yml`
+  # triggers on tag pushes — but events raised with the default `GITHUB_TOKEN`
+  # do not start workflow runs (GitHub's recursion guard), so without a PAT in
+  # `RELEASE_PLEASE_TOKEN` that tag is created and nothing publishes. It cost
+  # this repo its 0.1.0: the tag and the GitHub Release existed, npm had
+  # nothing, and it took a hand-run publish to notice.
+  #
+  # Calling `release.yml` as a reusable workflow keeps everything inside THIS
+  # run, where the guard does not apply. The `secrets.RELEASE_PLEASE_TOKEN ||
+  # secrets.GITHUB_TOKEN` fallback above stays because it is still what lets
+  # release-please push its branch, but the publish no longer depends on which
+  # side of that `||` you land on — and that fallback is SILENT, which is
+  # exactly what made the failure so hard to see.
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    # Granted HERE, on the calling job, not inherited. A reusable workflow
+    # cannot hold more than its caller does, and this file's top-level
+    # `permissions: contents: read` would otherwise cap `id-token: write` away
+    # — npm would then see an anonymous publish and answer 404, which reads as
+    # "no permission to that package" rather than "no OIDC token".
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
