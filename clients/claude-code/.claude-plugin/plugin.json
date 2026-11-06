@@ -10,12 +10,7 @@
   "homepage": "https://github.com/arc-labs-ai/brain-kit#readme",
   "repository": "https://github.com/arc-labs-ai/brain-kit",
   "license": "Apache-2.0",
-  "keywords": [
-    "memory",
-    "mcp",
-    "brain",
-    "ai-agents"
-  ],
+  "keywords": ["memory", "mcp", "brain", "ai-agents"],
   "mcpServers": {
     "brain": {
       "type": "http",

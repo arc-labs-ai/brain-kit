@@ -11,12 +11,7 @@
       "source": "./clients/claude-code",
       "description": "Durable memory for your agent, backed by the Brain memory database. Prompts for your API key on install and stores it in your OS keychain.",
       "category": "memory",
-      "tags": [
-        "memory",
-        "mcp",
-        "recall",
-        "knowledge-graph"
-      ]
+      "tags": ["memory", "mcp", "recall", "knowledge-graph"]
     }
   ]
 }
