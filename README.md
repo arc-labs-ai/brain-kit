@@ -157,16 +157,72 @@ visible in any configuration file**:
 Reading the configuration would have told you everything was fine in both
 cases. Running it is the only thing that finds them.
 
+## Taking it off again
+
+```bash
+npx @brain-db/cli disconnect
+```
+
+`connect` writes to six places: an MCP server in three JSON configs, an entry
+in Codex's TOML, a Claude Code plugin with your key in the OS keychain, and a
+directory of skills under `~/.agents/skills`. Nobody finds all six by hand, and
+the two least likely to be found are the two that matter — the key, and the
+skills, which live in a shared directory that has nothing to do with Brain.
+
+```
+  brain disconnect
+  Remove Brain from this machine — the servers, the plugin and the skills.
+
+  server     "brain"
+  clients    Claude Code, Codex CLI, Cursor
+
+  removed
+    ✓ Claude Code            plugin brain@arc-labs removed
+    ✓ Codex CLI              via `codex mcp remove`
+    ! Cursor                 the "brain" server in ~/.cursor/mcp.json is not one of ours — left alone
+    ✓ skill: brain-memory    removed ~/.agents/skills/brain-memory
+
+  next
+    Restart Claude Code and Codex CLI.
+
+    Your API key still works — removing it from this machine does not retire it.
+      Revoke it in the dashboard if this machine should no longer have access.
+```
+
+**It removes only what it can show it wrote.** Each config belongs to you and
+holds your other servers, so every removal is gated on evidence: a Brain key on
+the server entry, our marker file beside the skill, our own repository on the
+marketplace. Anything unproven is reported and left where it is — a
+`disconnect` that deletes somebody's unrelated `brain` server is worse than one
+that leaves ours behind, because the second is visible and the first is not.
+
+Two things it deliberately does not do:
+
+- **It does not revoke the key.** The key keeps working after the last local
+  trace of it is gone, and only the dashboard can retire it. So that is the
+  closing instruction rather than a silent API call from a cleanup command —
+  somebody who runs `disconnect` to cut this machine's access should not walk
+  away believing they have.
+- **It does not delete the `.brain-backup` copies.** Those are your own config
+  from before Brain touched it, and deleting them is the one step here that
+  cannot be undone. They are named instead.
+
+Add `--dry-run` to see the list without changing anything, `--client <id>` to
+clean up one client, or `--keep-skills` to take the servers out and leave the
+shared skills for whatever else reads them.
+
 ## Options
 
 | Flag | Meaning |
 |---|---|
 | `--backend <url>` | A different Brain, e.g. `http://localhost:8080` for a local brain-edge |
+| `--mcp-url <url>` | The MCP endpoint to point clients at. Unset means "whatever the deployment that issued the key hands out", which is the answer that cannot be wrong |
 | `--client <id>` | Only this client: `claude-code`, `codex`, `cursor`, `claude-desktop`, `windsurf`. Repeatable, and it configures the client whether or not it was detected |
 | `--key <key>` | Skip the browser and use this key. For CI and headless machines; needs `--namespace` |
 | `--namespace <name>` | Namespace for `--key` |
 | `--machine <name>` | What to call this machine on the approval screen |
 | `--no-browser` | Print the URL instead of opening one |
+| `--keep-skills` | `disconnect` only: leave `~/.agents/skills` alone |
 | `--dry-run` | Say what would change, write nothing |
 
 ## The skills
@@ -225,13 +281,13 @@ same `skills/`, never another copy of the skills.
 
 ## What gets configured where
 
-| Client | MCP server | Skills |
-|---|---|---|
-| Claude Code | the **plugin** — carries the server, the skill, and the key in your OS keychain | bundled with the plugin |
-| Codex CLI | `codex mcp add` (it owns its TOML) | `~/.agents/skills` |
-| Cursor | `~/.cursor/mcp.json` | `~/.agents/skills` |
-| Claude Desktop | `…/claude_desktop_config.json` | — |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `~/.agents/skills` |
+| Client | MCP server | Skills | `disconnect` undoes it with |
+|---|---|---|---|
+| Claude Code | the **plugin** — carries the server, the skill, and the key in your OS keychain | bundled with the plugin | `claude plugin uninstall brain@arc-labs`, then the `arc-labs` marketplace once nothing else is installed from it |
+| Codex CLI | `codex mcp add` (it owns its TOML) | `~/.agents/skills` | `codex mcp remove brain` |
+| Cursor | `~/.cursor/mcp.json` | `~/.agents/skills` | the `brain` entry, if its bearer is a Brain key |
+| Claude Desktop | `…/claude_desktop_config.json` | — | the `brain` entry, if it runs `@brain-db/mcp` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `~/.agents/skills` | the `brain` entry, if its bearer is a Brain key |
 
 Claude Code is the asymmetric one, and deliberately: a user-scoped MCP server
 shadows a plugin's server of the same name, so writing one beside the plugin
