@@ -26,14 +26,14 @@ import {
   BEARER_ENV_VAR,
   type ClientTarget,
   type Outcome,
+  SERVER_NAME,
   SERVER_PACKAGE,
   type ServerSpec,
   detect,
   install,
   installSkills,
   knownIds,
-  targetById,
-  targets,
+  resolveClients,
 } from "../clients/index.js";
 import {
   ConnectClient,
@@ -70,9 +70,6 @@ export const DEFAULT_BACKEND = "https://api.stg.arc-labs.ai";
  * would quietly point a self-hosted user's editors at Arc Labs' staging.
  */
 export const DEFAULT_MCP = "https://mcp.stg.arc-labs.ai/mcp";
-
-/** The MCP server name written into every client. */
-const SERVER_NAME = "brain";
 
 export type ConnectOptions = {
   backendUrl: string;
@@ -237,35 +234,6 @@ function markOf(status: Outcome["status"]): Mark {
     case "failed":
       return "fail";
   }
-}
-
-/** A refusal with its own remedy, kept apart from how either is laid out. */
-type Refusal = { what: string; remedy: string };
-
-/**
- * Which clients this run should touch, or a refusal naming the mistake.
- *
- * Returns the two halves separately rather than one pre-formatted string. The
- * string version embedded its own indentation, which then collided with the
- * indentation the printer adds — the kind of defect that is invisible in the
- * source and obvious the first time anyone runs it.
- */
-function resolveClients(ids: string[]): ClientTarget[] | Refusal {
-  if (ids.length === 0) return targets();
-  const resolved: ClientTarget[] = [];
-  const unknown: string[] = [];
-  for (const id of ids) {
-    const target = targetById(id);
-    if (target) resolved.push(target);
-    else unknown.push(id);
-  }
-  if (unknown.length > 0) {
-    return {
-      what: `No client called ${unknown.map((u) => `"${u}"`).join(" or ")}.`,
-      remedy: `Known clients: ${knownIds().join(", ")}`,
-    };
-  }
-  return resolved;
 }
 
 /**

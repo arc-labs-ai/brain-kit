@@ -27,6 +27,7 @@
 
 import { spawn } from "node:child_process";
 import {
+  SERVER_NAME,
   SERVER_PACKAGE,
   detect,
   inspect,
@@ -70,7 +71,7 @@ export async function doctor(options: DoctorOptions): Promise<number> {
       item("skip", target.label, "not installed on this machine");
       continue;
     }
-    const state = inspect(target, "brain");
+    const state = inspect(target, SERVER_NAME);
     if (state.configured) {
       configuredCount += 1;
       item("ok", target.label, state.where);
@@ -207,7 +208,7 @@ function resolveCredential(options: DoctorOptions): Credential | undefined {
 function discover(): Credential | undefined {
   for (const target of targets()) {
     if (target.writer.kind !== "json") continue;
-    const entry = readServer(target.writer.path, "brain");
+    const entry = readServer(target.writer.path, SERVER_NAME);
     if (!entry) continue;
     if ("url" in entry) {
       const header = entry.headers?.Authorization ?? "";

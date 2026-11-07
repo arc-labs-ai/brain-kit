@@ -12,12 +12,13 @@ import {
   DEFAULT_BACKEND,
   connect,
   defaultMachineName,
+  disconnect,
   doctor,
 } from "./commands/index.js";
 import { say } from "./ui.js";
 
 export type Parsed = {
-  command: "connect" | "doctor" | "help" | "version";
+  command: "connect" | "disconnect" | "doctor" | "help" | "version";
   backendUrl: string;
   mcpUrl: string | undefined;
   selfHost: boolean;
@@ -27,6 +28,8 @@ export type Parsed = {
   apiKey: string | undefined;
   namespace: string | undefined;
   machine: string;
+  /** `disconnect` only: leave the shared skills where they are. */
+  keepSkills: boolean;
 };
 
 export class UsageError extends Error {
@@ -57,6 +60,7 @@ export function parse(argv: string[]): Parsed {
     apiKey: process.env.BRAIN_MCP_API_KEY,
     namespace: undefined,
     machine: defaultMachineName(),
+    keepSkills: false,
   };
 
   let i = 0;
@@ -65,12 +69,13 @@ export function parse(argv: string[]): Parsed {
   if (first && !first.startsWith("-")) {
     switch (first) {
       case "connect":
+      case "disconnect":
       case "doctor":
       case "help":
         parsed.command = first;
         break;
       default:
-        throw new UsageError(`unknown command "${first}"`);
+        throw new UsageError(`unknown command "${first}"${suggestion(first)}`);
     }
     i = 1;
   }
@@ -111,6 +116,9 @@ export function parse(argv: string[]): Parsed {
       case "--no-browser":
         parsed.noBrowser = true;
         break;
+      case "--keep-skills":
+        parsed.keepSkills = true;
+        break;
       case "-h":
       case "--help":
         parsed.command = "help";
@@ -139,6 +147,7 @@ export const USAGE = `
   Usage
     npx @brain-db/cli                 set this machine up
     npx @brain-db/cli doctor          check that it actually works
+    npx @brain-db/cli disconnect      remove it from this machine
 
   Options
     --backend <url>      the Brain to connect to
@@ -154,10 +163,38 @@ export const USAGE = `
     --namespace <name>   namespace for --key
     --machine <name>     what to call this machine on the approval screen
     --no-browser         print the URL instead of opening one
+    --keep-skills        disconnect: leave the shared skills in place
     --dry-run            say what would change, write nothing
     -h, --help           this
     -v, --version        print the version
 `;
+
+/**
+ * ", did you mean …" for a command word we do not have.
+ *
+ * Only for the words people actually type for these two things. `uninstall`
+ * and `remove` are what somebody reaches for when they want Brain gone, and
+ * `unknown command "uninstall"` followed by a usage block leaves them to spot
+ * `disconnect` in a list — which is a worse answer than the one line that
+ * names it.
+ */
+function suggestion(word: string): string {
+  const near: Record<string, Parsed["command"]> = {
+    uninstall: "disconnect",
+    remove: "disconnect",
+    rm: "disconnect",
+    reset: "disconnect",
+    clean: "disconnect",
+    install: "connect",
+    setup: "connect",
+    init: "connect",
+    login: "connect",
+    check: "doctor",
+    status: "doctor",
+  };
+  const match = near[word.toLowerCase()];
+  return match ? ` — did you mean \`${match}\`?` : "";
+}
 
 /** Dispatch. Returns a process exit code. */
 export async function main(argv: string[], version: string): Promise<number> {
@@ -186,6 +223,12 @@ export async function main(argv: string[], version: string): Promise<number> {
         backendUrl: parsed.backendUrl,
         mcpUrl: parsed.mcpUrl,
         apiKey: parsed.apiKey,
+      });
+    case "disconnect":
+      return disconnect({
+        clients: parsed.clients,
+        keepSkills: parsed.keepSkills,
+        dryRun: parsed.dryRun,
       });
     case "connect":
       return connect({

@@ -55,7 +55,7 @@ export function bundledSkillsDir(): string {
 
 export type SkillResult = {
   name: string;
-  status: "installed" | "updated" | "skipped" | "failed";
+  status: "installed" | "updated" | "removed" | "skipped" | "failed";
   detail: string;
 };
 
@@ -122,17 +122,28 @@ export function installSkills(dryRun: boolean): SkillResult[] {
   return results;
 }
 
-/** Remove only the skills this tool installed. */
-export function removeSkills(): SkillResult[] {
+/**
+ * Remove only the skills this tool installed.
+ *
+ * The marker file is the whole of the decision. A skill somebody wrote
+ * themselves under one of our names has no marker, so it is not ours to
+ * delete — and since `installSkills` refuses to overwrite an unmarked skill in
+ * the first place, an unmarked one here was never ours to begin with.
+ */
+export function removeSkills(dryRun: boolean): SkillResult[] {
   const target = skillsDir();
   if (!existsSync(target)) return [];
   const results: SkillResult[] = [];
   for (const name of readdirSync(target)) {
     const path = join(target, name);
     if (!isSkill(path) || !isOurs(path)) continue;
+    if (dryRun) {
+      results.push({ name, status: "skipped", detail: `would remove ${path}` });
+      continue;
+    }
     try {
       rmSync(path, { recursive: true, force: true });
-      results.push({ name, status: "installed", detail: `removed ${path}` });
+      results.push({ name, status: "removed", detail: `removed ${path}` });
     } catch (err) {
       results.push({ name, status: "failed", detail: String(err) });
     }
