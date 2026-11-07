@@ -209,3 +209,35 @@ export function targetById(id: string): ClientTarget | undefined {
 export function knownIds(): string[] {
   return targets().map((t) => t.id);
 }
+
+/** A refusal with its own remedy, kept apart from how either is laid out. */
+export type Refusal = { what: string; remedy: string };
+
+/**
+ * Which clients a run should touch, or a refusal naming the mistake.
+ *
+ * Returns the two halves separately rather than one pre-formatted string. The
+ * string version embedded its own indentation, which then collided with the
+ * indentation the printer adds — the kind of defect that is invisible in the
+ * source and obvious the first time anyone runs it.
+ *
+ * Shared by every command that takes `--client`, so a typo is answered the
+ * same way whether it was passed to `connect` or to `disconnect`.
+ */
+export function resolveClients(ids: string[]): ClientTarget[] | Refusal {
+  if (ids.length === 0) return targets();
+  const resolved: ClientTarget[] = [];
+  const unknown: string[] = [];
+  for (const id of ids) {
+    const target = targetById(id);
+    if (target) resolved.push(target);
+    else unknown.push(id);
+  }
+  if (unknown.length > 0) {
+    return {
+      what: `No client called ${unknown.map((u) => `"${u}"`).join(" or ")}.`,
+      remedy: `Known clients: ${knownIds().join(", ")}`,
+    };
+  }
+  return resolved;
+}

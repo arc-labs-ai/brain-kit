@@ -142,9 +142,20 @@ function readConfig(path: string): Record<string, unknown> {
  * someone reaches for a backup.
  */
 function backupOnce(path: string): string {
-  const backup = `${path}.brain-backup`;
+  const backup = backupPath(path);
   if (!existsSync(backup)) copyFileSync(path, backup);
   return backup;
+}
+
+/**
+ * Where the backup of `path` goes.
+ *
+ * Exported because `disconnect` has to look for the same file this writes, and
+ * a cleanup command searching for a suffix that the writer no longer uses
+ * reports a clean machine while the copies sit there.
+ */
+export function backupPath(path: string): string {
+  return `${path}.brain-backup`;
 }
 
 /** Write via a temp file and rename, then lock the permissions down. */

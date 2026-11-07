@@ -15,4 +15,6 @@ export {
   specFor,
 } from "./connect.js";
 
+export { disconnect, type DisconnectOptions } from "./disconnect.js";
+
 export { doctor, type DoctorOptions } from "./doctor.js";
