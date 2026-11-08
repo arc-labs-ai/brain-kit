@@ -135,7 +135,9 @@ export async function connect(options: ConnectOptions): Promise<number> {
     return 1;
   }
 
-  const grant = options.apiKey ? directGrant(options) : await handoff(options, present);
+  const grant = options.apiKey
+    ? await directGrant(options)
+    : await handoff(options, present);
   if (typeof grant === "number") return grant;
 
   // What arrived. The key is masked rather than hidden entirely: seeing a
@@ -414,25 +416,129 @@ export function specFor(grant: Grant, options: ConnectOptions): ServerSpec {
   };
 }
 
-/** A grant assembled from `--key`, for CI and headless machines. */
-function directGrant(options: ConnectOptions): Grant | number {
-  if (!options.namespace) {
-    problem(
-      "--key needs --namespace as well.",
-      "A key is bound to one namespace, and with no browser in the loop there is nobody to choose it.",
-    );
-    return 1;
-  }
-  return {
-    apiKey: options.apiKey ?? "",
-    namespace: options.namespace,
-    space: undefined,
+/**
+ * A grant assembled from `--key`, for CI and headless machines.
+ *
+ * ## It asks the backend who the key is, rather than requiring `--namespace`
+ *
+ * `--namespace` used to be mandatory here, and it bought nothing: the value
+ * was printed in the `granted` block and never used again. Nothing checked it
+ * against the key, so a typo printed a namespace this machine was not
+ * actually writing to — and the flag could not be filled in honestly by the
+ * one caller that matters. The dashboard knows a key's namespace **id**, a
+ * uuid; the CLI wants its slug. So the command the Keys page could print was
+ * either wrong or incomplete.
+ *
+ * A key already knows. `whoami` returns the namespace and space it resolves
+ * to, which is the truth rather than a restatement of what somebody typed.
+ *
+ * **And it fails here instead of later.** The old path configured all six
+ * clients with an unvalidated key: a revoked one wrote the plugin, the OS
+ * keychain and four config files, reported success in every row, and was
+ * discovered only by `doctor` — or by an agent, mid-task. One request before
+ * the first write turns that into a refusal with a remedy.
+ *
+ * `--namespace` survives as an override for an install that cannot reach the
+ * backend at all, where a label is better than a stall.
+ */
+async function directGrant(options: ConnectOptions): Promise<Grant | number> {
+  const apiKey = options.apiKey ?? "";
+  const base = {
+    apiKey,
+    space: undefined as string | undefined,
     backendUrl: options.backendUrl,
     // With no handoff there is no grant to read the endpoint from, so this is
     // the one place a default is right. `--mcp-url` still wins, which is how a
     // self-hosted CI run points at its own server.
     mcpUrl: DEFAULT_MCP,
   };
+
+  // An explicit namespace is taken at its word and the call is skipped: that
+  // is what makes this usable on a machine with no route to the backend.
+  if (options.namespace) {
+    return { ...base, namespace: options.namespace };
+  }
+
+  const spinner = waiting("checking the key…");
+  const identity = await whoami(options.backendUrl, apiKey);
+  spinner.stop();
+
+  if (identity.kind === "refused") {
+    problem(
+      "That key was refused.",
+      "The backend does not recognise it, or it has been revoked. Mint a replacement in the dashboard — nothing on this machine was changed.",
+    );
+    return 1;
+  }
+  if (identity.kind === "unreachable") {
+    problem(
+      `Could not reach ${options.backendUrl} to check the key.`,
+      `${identity.detail}. Pass --namespace to set this machine up anyway, without the check.`,
+    );
+    return 1;
+  }
+  return { ...base, namespace: identity.namespace, space: identity.space };
+}
+
+/** What `whoami` had to say about a key. */
+type Identity =
+  | { kind: "ok"; namespace: string; space: string | undefined }
+  | { kind: "refused" }
+  | { kind: "unreachable"; detail: string };
+
+/**
+ * Who a key resolves to, straight from the backend.
+ *
+ * A bare `fetch` rather than the SDK, for the same reason this package has no
+ * runtime dependencies: `npx` pays for every one of them in cold-start time,
+ * and this is one GET.
+ */
+async function whoami(backendUrl: string, apiKey: string): Promise<Identity> {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${backendUrl}/v1/whoami`, {
+      headers: { authorization: `Bearer ${apiKey}`, accept: "application/json" },
+      signal: controller.signal,
+    });
+    // 403 as well as 401: a key that exists but may not read its own identity
+    // is not a key this install can describe, and proceeding would print a
+    // namespace nobody confirmed.
+    if (response.status === 401 || response.status === 403) {
+      return { kind: "refused" };
+    }
+    if (!response.ok) {
+      return { kind: "unreachable", detail: `it answered ${response.status}` };
+    }
+    const body: unknown = await response.json();
+    const namespace = readString(body, "namespace");
+    if (namespace === undefined) {
+      return { kind: "unreachable", detail: "it answered without a namespace" };
+    }
+    // NO SPACE. `whoami` answers with `space_id`, Brain's own uuid — and the
+    // field beside it prints a SLUG ("namespace / space"), so putting a uuid
+    // there would be noise where a name belongs. The handoff carries a real
+    // slug because the dashboard picked one; this path has none, and an
+    // honest blank beats a confident identifier.
+    return { kind: "ok", namespace, space: undefined };
+  } catch (err) {
+    if (controller.signal.aborted) {
+      return { kind: "unreachable", detail: "it did not answer within 15s" };
+    }
+    return {
+      kind: "unreachable",
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+/** One string field out of a body whose shape is the server's to choose. */
+function readString(body: unknown, field: string): string | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const value = (body as Record<string, unknown>)[field];
+  return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 /** Print a failure and return the exit code. */
