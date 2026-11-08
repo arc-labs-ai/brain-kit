@@ -3,8 +3,16 @@
  */
 
 import { existsSync } from "node:fs";
-import { WriteError, mergeServer, readServer } from "./json.js";
-import { available, jsonFrom, looksUnsupported, reasonFrom, run } from "./run.js";
+import { WriteError, mergeServer, readServer, removeServer } from "./json.js";
+import type { ServerEntry } from "./json.js";
+import {
+  type RunResult,
+  available,
+  jsonFrom,
+  looksUnsupported,
+  reasonFrom,
+  run,
+} from "./run.js";
 import type { ClientTarget, ServerSpec } from "./targets.js";
 
 /**
@@ -25,6 +33,24 @@ export const SERVER_PACKAGE = "@brain-db/mcp";
  * supports, and the user has to export it.
  */
 export const BEARER_ENV_VAR = "BRAIN_API_KEY";
+
+/**
+ * The MCP server name written into every client.
+ *
+ * One constant, because it is written by `connect` and looked for by both
+ * `doctor` and `disconnect`. It was a literal in three files, and a removal
+ * that searches for a different string than the install wrote is a removal
+ * that silently leaves the server behind.
+ */
+export const SERVER_NAME = "brain";
+
+/**
+ * The prefix every Brain API key carries.
+ *
+ * Used as evidence of ownership when removing a remote server: see
+ * {@link ownsEntry}.
+ */
+const KEY_PREFIX = "brain_";
 
 /** The Claude Code marketplace and plugin this installs. */
 export const MARKETPLACE = "arc-labs";
@@ -404,7 +430,7 @@ function isOurs(entry: ListedServer | undefined, spec: ServerSpec): boolean {
  * `marketplace list --json` answers the question directly.
  */
 function ensureMarketplace(bin: string): string | undefined {
-  const registered = findMarketplace(bin, MARKETPLACE);
+  const registered = findMarketplace(bin, MARKETPLACE).kind;
 
   if (registered === "ours") return undefined;
 
@@ -426,8 +452,20 @@ function ensureMarketplace(bin: string): string | undefined {
   return reasonFrom(added);
 }
 
+/**
+ * Whether `name` is registered, where it points, and whether that is us.
+ *
+ * `where` is carried because a removal has to explain a refusal: "registered
+ * from somewhere else" is not actionable, and "registered from
+ * /Users/you/src/brain-kit" is.
+ */
+export type MarketplaceState = {
+  kind: "ours" | "foreign" | "absent";
+  where: string | undefined;
+};
+
 /** Whether `name` is registered, and whether it points at our source. */
-function findMarketplace(bin: string, name: string): "ours" | "foreign" | "absent" {
+function findMarketplace(bin: string, name: string): MarketplaceState {
   const listed = run(bin, ["plugin", "marketplace", "list", "--json"], {
     timeoutMs: 30_000,
   });
@@ -436,20 +474,33 @@ function findMarketplace(bin: string, name: string): "ours" | "foreign" | "absen
     // Cannot tell. Treat as absent and let `add` decide — it refuses a
     // duplicate name, which is a safe failure. Guessing "foreign" here would
     // refuse to install on every machine whose CLI predates `--json`.
-    return "absent";
+    return { kind: "absent", where: undefined };
   }
   const entry = parsed.find(
     (m): m is Record<string, unknown> =>
       typeof m === "object" && m !== null && (m as { name?: unknown }).name === name,
   );
-  if (!entry) return "absent";
+  if (!entry) return { kind: "absent", where: undefined };
   // A GitHub marketplace reports `repo`; one added from a checkout reports
-  // `path`. Both are "ours" when they name the source we would add — which is
-  // how a developer working from a local clone avoids being told their own
-  // marketplace belongs to somebody else.
-  return entry.repo === MARKETPLACE_SOURCE || entry.path === MARKETPLACE_SOURCE
-    ? "ours"
-    : "foreign";
+  // `path`.
+  const where =
+    typeof entry.repo === "string"
+      ? entry.repo
+      : typeof entry.path === "string"
+        ? entry.path
+        : undefined;
+  // Only our own repository counts as ours. A local checkout reports its
+  // absolute path, which never equals `owner/repo`, so a developer's own
+  // marketplace reads as "foreign" — and that is the direction to be wrong in:
+  // `marketplace remove` uninstalls every plugin from it and deletes their
+  // stored options, so a wrong "ours" is destructive and a wrong "foreign" is
+  // one line of output asking them to remove it themselves.
+  return { kind: where === MARKETPLACE_SOURCE ? "ours" : "foreign", where };
+}
+
+/** Where the Claude Code marketplace we install from currently points. */
+export function marketplaceState(bin: string): MarketplaceState {
+  return findMarketplace(bin, MARKETPLACE);
 }
 
 /** What `target` currently has configured, for `doctor`. */
@@ -480,6 +531,293 @@ export function inspect(
         where: `plugin ${PLUGIN}@${MARKETPLACE}`,
       };
     }
+  }
+}
+
+/**
+ * What a removal did, per client.
+ *
+ * A separate union from {@link Outcome} rather than a reused one, because the
+ * states genuinely differ: an install can be "skipped", a removal can find
+ * **somebody else's** server under our name — and `kept` has to be impossible
+ * to confuse with `removed` in both the code and the output.
+ */
+export type Removal = {
+  client: ClientTarget;
+  status: "removed" | "would" | "absent" | "kept" | "failed";
+  /** One line, written for a terminal. */
+  detail: string;
+};
+
+/**
+ * Whether a config entry is one `connect` wrote.
+ *
+ * The name cannot be the evidence. `brain` is a plausible name for somebody
+ * else's server, and a removal that goes by name alone deletes it — the same
+ * reasoning as {@link isOurs}, which guards the Claude Code path, applied to
+ * the files we edit directly.
+ *
+ * - A **remote** entry is ours when its bearer is a Brain key. Not when its
+ *   URL matches a hostname we know: self-hosted users point at their own, and
+ *   refusing to clean up after them would make this command useless to exactly
+ *   the people most likely to run it.
+ * - A **local** entry is ours when it runs our package.
+ */
+export function ownsEntry(entry: ServerEntry): boolean {
+  if ("url" in entry) {
+    const bearer = (entry.headers?.Authorization ?? "").replace(/^Bearer\s+/i, "").trim();
+    return bearer.startsWith(KEY_PREFIX);
+  }
+  return [entry.command, ...(entry.args ?? [])].join(" ").includes(SERVER_PACKAGE);
+}
+
+/** Undo what {@link install} did to `target`. */
+export function uninstall(target: ClientTarget, dryRun: boolean): Removal {
+  const writer = target.writer;
+  switch (writer.kind) {
+    case "json":
+      return fromJson(target, writer.path, dryRun);
+    case "cli":
+      return fromCli(target, writer.bin, dryRun);
+    case "plugin":
+      return fromPlugin(target, writer.bin, dryRun);
+  }
+}
+
+/** Take our entry out of a JSON config, leaving everything else in it. */
+function fromJson(target: ClientTarget, path: string, dryRun: boolean): Removal {
+  const entry = readServer(path, SERVER_NAME);
+  if (!entry) {
+    return {
+      client: target,
+      status: "absent",
+      detail: `no "${SERVER_NAME}" server in ${path}`,
+    };
+  }
+  if (!ownsEntry(entry)) {
+    return {
+      client: target,
+      status: "kept",
+      detail: `the "${SERVER_NAME}" server in ${path} is not one of ours — left alone`,
+    };
+  }
+  if (dryRun) {
+    return {
+      client: target,
+      status: "would",
+      detail: `would remove "${SERVER_NAME}" from ${path}`,
+    };
+  }
+  try {
+    return removeServer(path, SERVER_NAME)
+      ? { client: target, status: "removed", detail: path }
+      : { client: target, status: "absent", detail: `nothing to remove in ${path}` };
+  } catch (err) {
+    return {
+      client: target,
+      status: "failed",
+      detail: err instanceof WriteError ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Let the client's own CLI take its config apart.
+ *
+ * No ownership check here, and the asymmetry with {@link fromJson} is real:
+ * this client's config is TOML its CLI owns, and `mcp list` gives back prose
+ * rather than the entry. Going by name is the same assumption {@link viaCli}
+ * already makes when it removes before adding — so a `brain` server somebody
+ * else configured in Codex would be removed. It is named in the output, which
+ * is the most this path can honestly offer.
+ */
+function fromCli(target: ClientTarget, bin: string, dryRun: boolean): Removal {
+  if (!available(bin)) {
+    return {
+      client: target,
+      status: "failed",
+      detail: `\`${bin}\` is not on PATH, so its config could not be edited — remove the "${SERVER_NAME}" server by hand`,
+    };
+  }
+  if (!inspect(target, SERVER_NAME).configured) {
+    return {
+      client: target,
+      status: "absent",
+      detail: `no "${SERVER_NAME}" server in \`${bin} mcp list\``,
+    };
+  }
+  if (dryRun) {
+    return {
+      client: target,
+      status: "would",
+      detail: `would run \`${bin} mcp remove ${SERVER_NAME}\``,
+    };
+  }
+  const result = run(bin, ["mcp", "remove", SERVER_NAME], { timeoutMs: 20_000 });
+  if (result.code !== 0) {
+    return {
+      client: target,
+      status: "failed",
+      detail: looksUnsupported(result)
+        ? `this version of \`${bin}\` does not support \`mcp remove\` — update it, or remove the server by hand`
+        : reasonFrom(result),
+    };
+  }
+  return { client: target, status: "removed", detail: `via \`${bin} mcp remove\`` };
+}
+
+/** Uninstall the Claude Code plugin, which is the whole install on that path. */
+function fromPlugin(target: ClientTarget, bin: string, dryRun: boolean): Removal {
+  if (!available(bin)) {
+    return {
+      client: target,
+      status: "failed",
+      detail: `\`${bin}\` is not on PATH, so the plugin could not be uninstalled`,
+    };
+  }
+  const id = `${PLUGIN}@${MARKETPLACE}`;
+  if (dryRun) {
+    return { client: target, status: "would", detail: `would uninstall plugin ${id}` };
+  }
+
+  const result = run(bin, ["plugin", "uninstall", id, "--json"], { timeoutMs: 60_000 });
+  switch (pluginOutcome(result)) {
+    case "absent":
+      return {
+        client: target,
+        status: "absent",
+        detail: `plugin ${id} is not installed`,
+      };
+    case "failed":
+      return {
+        client: target,
+        status: "failed",
+        detail: looksUnsupported(result)
+          ? `this version of Claude Code cannot uninstall plugins non-interactively — update it, or remove ${id} from /plugin`
+          : reasonFrom(result),
+      };
+    case "ok":
+      break;
+  }
+
+  // Asked rather than assumed: whether uninstalling a plugin also drops the
+  // options it had stored is Claude Code's business, and the only honest way
+  // to report it is to look. When it can still be read back, it is a leftover
+  // credential and worth a line; when the plugin is gone the question has no
+  // answer from out here, and `disconnect` says so once at the end instead of
+  // claiming either way.
+  return {
+    client: target,
+    status: "removed",
+    detail: storedConfigRemains(bin, id)
+      ? `plugin ${id} removed — it still has stored options; clear them with \`${bin} plugin configure ${id}\``
+      : `plugin ${id} removed`,
+  };
+}
+
+/**
+ * What a `plugin uninstall --json` run actually says.
+ *
+ * Read from the JSON and not from the exit code, because the two questions
+ * that matter here — "was it even installed" and "could it not be removed" —
+ * are one field apart in the JSON (`failureCode: "not_installed"`) and
+ * indistinguishable in a status code. Reporting a plugin that was never there
+ * as a failure is how an uninstall command ends up looking broken on a machine
+ * that is already clean.
+ */
+function pluginOutcome(result: RunResult): "ok" | "absent" | "failed" {
+  const parsed = jsonFrom(result);
+  if (isRecord(parsed)) {
+    const outcome = typeof parsed.outcome === "string" ? parsed.outcome : undefined;
+    const code = typeof parsed.failureCode === "string" ? parsed.failureCode : undefined;
+    if (outcome === "ok") return "ok";
+    if (code === "not_installed" || code === "not_configured") return "absent";
+    if (outcome === "failed") return "failed";
+  }
+  // No JSON: an older CLI without `--json`. Fall back to the exit code, which
+  // is all there is.
+  return result.code === 0 ? "ok" : "failed";
+}
+
+/** Whether the plugin still has stored option values that can be read back. */
+function storedConfigRemains(bin: string, id: string): boolean {
+  const listed = run(bin, ["plugin", "configure", id], { timeoutMs: 30_000 });
+  // A plugin it no longer knows about is not a leftover; it is a plugin it no
+  // longer knows about.
+  if (listed.code !== 0) return false;
+  // Its report marks each option "set" or "not set" — and "not set" must not
+  // match, so the test is anchored on the closing bracket.
+  return /\(\s*set\s*\)|,\s*set\s*\)/.test(`${listed.stdout}\n${listed.stderr}`);
+}
+
+/** Every installed plugin id that came from `marketplace`. */
+export function pluginsFrom(bin: string, marketplace: string): string[] | undefined {
+  const listed = run(bin, ["plugin", "list", "--json"], { timeoutMs: 30_000 });
+  const parsed = jsonFrom(listed);
+  if (!Array.isArray(parsed)) return undefined;
+  return parsed.flatMap((entry) =>
+    isRecord(entry) &&
+    typeof entry.id === "string" &&
+    entry.id.endsWith(`@${marketplace}`)
+      ? [entry.id]
+      : [],
+  );
+}
+
+/**
+ * Remove the marketplace, once nothing is installed from it.
+ *
+ * Guarded twice, because `marketplace remove` is the most destructive command
+ * this package can run: it uninstalls every plugin from that marketplace and
+ * deletes their stored options. So it happens only when the registration is
+ * **ours** and when **nothing else** is installed from it — and an unreadable
+ * plugin list is a reason not to, not a reason to guess.
+ */
+export function removeMarketplace(
+  bin: string,
+  dryRun: boolean,
+): { status: Removal["status"]; detail: string } {
+  if (!available(bin)) {
+    return { status: "absent", detail: `\`${bin}\` is not on PATH` };
+  }
+  const state = marketplaceState(bin);
+  if (state.kind === "absent") {
+    return { status: "absent", detail: `marketplace ${MARKETPLACE} is not registered` };
+  }
+  if (state.kind === "foreign") {
+    return {
+      status: "kept",
+      detail: `marketplace ${MARKETPLACE} points at ${state.where ?? "somewhere else"}, not ${MARKETPLACE_SOURCE} — left alone`,
+    };
+  }
+
+  const remaining = pluginsFrom(bin, MARKETPLACE);
+  if (remaining === undefined) {
+    return {
+      status: "kept",
+      detail: `could not read the plugin list, so marketplace ${MARKETPLACE} was left alone`,
+    };
+  }
+  if (remaining.length > 0) {
+    return {
+      status: "kept",
+      detail: `marketplace ${MARKETPLACE} still has ${remaining.join(", ")} — removing it would uninstall ${remaining.length === 1 ? "it" : "them"} too`,
+    };
+  }
+  if (dryRun) {
+    return { status: "would", detail: `would remove marketplace ${MARKETPLACE}` };
+  }
+
+  const result = run(bin, ["plugin", "marketplace", "remove", MARKETPLACE, "--json"], {
+    timeoutMs: 60_000,
+  });
+  switch (pluginOutcome(result)) {
+    case "ok":
+      return { status: "removed", detail: `marketplace ${MARKETPLACE}` };
+    case "absent":
+      return { status: "absent", detail: `marketplace ${MARKETPLACE} is not registered` };
+    case "failed":
+      return { status: "failed", detail: reasonFrom(result) };
   }
 }
 
