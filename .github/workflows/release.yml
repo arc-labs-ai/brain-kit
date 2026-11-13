@@ -57,21 +57,6 @@ on:
   # Called by `release-please.yml` IN THE SAME RUN, which is what removes the
   # need for a PAT.
   #
-  # The recursion guard only suppresses NEW events raised with the default
-  # `GITHUB_TOKEN` — a tag push is such an event, a job in the same run is not.
-  # So release-please can hand the publish straight to this workflow and no
-  # `RELEASE_PLEASE_TOKEN` has to exist, be stored, or be rotated.
-  #
-  # The split the comment above describes is preserved, because it is a split
-  # between JOBS and not between files: the third-party release-please action
-  # runs in a job with no `id-token: write`, and this job, which holds the
-  # publish identity, runs no third-party action.
-  workflow_call:
-    inputs:
-      tag:
-        description: "Tag just created by release-please."
-        required: true
-        type: string
 
 # No repo-wide write; the job opts into `id-token: write` for OIDC.
 permissions:
@@ -82,14 +67,12 @@ jobs:
     name: Publish → npm
     runs-on: ubuntu-26.04
     environment: release
-    # One publish of a given version at a time. Both entrypoints — the tag
-    # push and the release-please hand-off — fire for the same release when
-    # `RELEASE_PLEASE_TOKEN` is set, and without this they run side by side and
-    # race. Keyed on the ref rather than the workflow so the two DIFFERENT
-    # workflows calling this one still share the queue.
+    # One publish of a given version at a time. The tag fires this once, and
+    # the dispatch escape hatch can fire it again for a tag that already
+    # shipped; keyed on the ref so those two queue rather than race.
     #
-    # `cancel-in-progress: false`, emphatically: cancelling a publish mid-flight
-    # is how a half-uploaded version happens.
+    # `cancel-in-progress: false`, emphatically: cancelling a publish
+    # mid-flight is how a half-uploaded version happens.
     concurrency:
       group: publish-npm-${{ inputs.tag || github.ref_name }}
       cancel-in-progress: false
@@ -165,19 +148,11 @@ jobs:
       # publisher and attaches provenance automatically.
       # Publish, and treat "someone else just published it" as success.
       #
-      # The pre-check above closes the SEQUENTIAL duplicate: a second run that
-      # starts after the first finished sees the version and skips. It does
-      # nothing for a CONCURRENT one, and concurrent is what actually happened
-      # on 0.1.1 — the tag push and the release-please hand-off started
-      # together, both checked before either had published, both proceeded,
-      # and the loser died on npm refusing an existing version. A release that
-      # shipped correctly still showed a red run.
-      #
-      # The `concurrency` group on this job now serialises the two, so the
-      # second one's pre-check runs after the first has finished and skips
-      # properly. This block is the belt to that braces: if the two ever do
-      # overlap again, the question asked is still "is the version on npm",
-      # not "did my process win the race".
+      # The pre-check above closes the SEQUENTIAL duplicate: a run that starts
+      # after another finished sees the version and skips. The `concurrency`
+      # group serialises overlapping runs so that holds. This block is the
+      # belt to those braces — if two ever do overlap, the question asked is
+      # still "is the version on npm", not "did my process win the race".
       - name: Publish
         if: steps.published.outputs.already != 'true'
         run: |
