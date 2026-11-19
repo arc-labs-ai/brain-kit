@@ -20,6 +20,7 @@ import {
   install,
   readServer,
 } from "../src/clients/index.js";
+import { SERVER_PACKAGE_RANGE, serverPackageSpec } from "../src/clients/install.js";
 import { DEFAULT_MCP, specFor } from "../src/commands/index.js";
 import { parseGrant } from "../src/connect/index.js";
 import type { Grant } from "../src/connect/session.js";
@@ -45,6 +46,14 @@ const OPTIONS = {
 };
 
 describe("specFor", () => {
+  it("pins the server spec to this package's declared development server", () => {
+    const packageJson = JSON.parse(
+      readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"),
+    ) as { devDependencies: Record<string, string> };
+    expect(SERVER_PACKAGE_RANGE).toBe(packageJson.devDependencies[SERVER_PACKAGE]);
+    expect(serverPackageSpec()).toContain(SERVER_PACKAGE);
+  });
+
   it("points clients at the hosted endpoint the grant named", () => {
     const spec = specFor(GRANT, OPTIONS);
     expect(spec.transport).toBe("http");
@@ -67,7 +76,13 @@ describe("specFor", () => {
     const spec = specFor({ ...GRANT, mcpUrl: undefined }, OPTIONS);
     expect(spec.transport).toBe("stdio");
     if (spec.transport !== "stdio") throw new Error("unreachable");
-    expect(spec.args).toContain(SERVER_PACKAGE);
+    // Pinning avoids launching a stale unversioned package from the npx cache.
+    expect(spec.args).toContain(serverPackageSpec());
+    expect(
+      spec.args,
+      "An unpinned spec is served from whatever npx last cached.",
+    ).toContain(`${SERVER_PACKAGE}@${SERVER_PACKAGE_RANGE}`);
+    expect(spec.args.join(" ")).toContain(SERVER_PACKAGE);
     expect(spec.env.BRAIN_MCP_API_KEY).toBe("brain_sk_test");
   });
 

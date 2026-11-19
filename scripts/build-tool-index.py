@@ -10,9 +10,10 @@ something that is gone.
 Reads `src/server/tools/*.ts` from the brain-mcp checkout (default: a sibling
 directory) and writes `skills/brain-memory/references/tool-index.md`.
 
-This is a CROSS-REPO generator, so nothing in this repo's CI can prove the
-index is current — only that it is internally consistent (see
-`test/tool-index.test.ts`). Run this when the server's surface changes.
+This is a CROSS-REPO generator, but this repo's CI can prove the index is
+current against the installed `@brain-db/mcp` package; re-run this generator
+when the server's surface changes. Internal consistency is checked in
+`test/skills.test.ts`.
 """
 
 import pathlib

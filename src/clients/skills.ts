@@ -35,6 +35,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MARKETPLACE, PLUGIN } from "./install.js";
 
 /** The shared skills directory every modern agent CLI reads. */
 export function skillsDir(): string {
@@ -51,6 +52,58 @@ export function skillsDir(): string {
 export function bundledSkillsDir(): string {
   // dist/clients/skills.js → ../../skills
   return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
+}
+
+export type SkillDrift = {
+  name: string;
+  locations: string[];
+};
+
+type SkillDriftPaths = {
+  bundled?: string;
+  portable?: string;
+  pluginCache?: string;
+};
+
+/**
+ * Find delivered skill copies whose instructions differ from the shipped copy.
+ *
+ * A client can otherwise appear healthy while its users receive different
+ * answers for the same tool, depending only on which copy it loaded.
+ */
+export function skillDrift(paths: SkillDriftPaths = {}): SkillDrift[] {
+  const reference = paths.bundled ?? bundledSkillsDir();
+  const portable = paths.portable ?? skillsDir();
+  const pluginCache =
+    paths.pluginCache ??
+    join(homedir(), ".claude", "plugins", "cache", MARKETPLACE, PLUGIN);
+  let names: string[];
+  try {
+    names = readdirSync(reference);
+  } catch {
+    return [];
+  }
+
+  const drift: SkillDrift[] = [];
+  for (const name of names) {
+    const skill = join(reference, name);
+    if (!isSkill(skill)) continue;
+
+    const referenceBytes = readBytes(join(skill, "SKILL.md"));
+    if (!referenceBytes) continue;
+    const copies = [
+      join(portable, name, "SKILL.md"),
+      ...pluginSkillPaths(pluginCache, name),
+    ];
+    const differing = copies.filter((path) => {
+      const bytes = readBytes(path);
+      return bytes !== undefined && !bytesEqual(referenceBytes, bytes);
+    });
+    if (differing.length > 0) {
+      drift.push({ name, locations: [join(skill, "SKILL.md"), ...differing] });
+    }
+  }
+  return drift;
 }
 
 export type SkillResult = {
@@ -157,6 +210,31 @@ function isSkill(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function pluginSkillPaths(cache: string, name: string): string[] {
+  try {
+    return readdirSync(cache, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(cache, entry.name, "skills", name, "SKILL.md"))
+      .filter((path) => existsSync(path));
+  } catch {
+    return [];
+  }
+}
+
+function readBytes(path: string): Buffer | undefined {
+  try {
+    return readFileSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function bytesEqual(left: Buffer, right: Buffer): boolean {
+  return (
+    left.length === right.length && left.every((byte, index) => byte === right[index])
+  );
 }
 
 function isOurs(path: string): boolean {

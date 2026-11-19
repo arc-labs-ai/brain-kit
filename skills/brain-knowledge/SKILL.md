@@ -19,6 +19,12 @@ came from, and seeing what it replaced.
 | `statement_history` | the full supersession chain, oldest to newest |
 | `get_relation` | one typed edge between entities, with its endpoints |
 
+By default, `get_statement` and `get_relation` follow supersession to the
+current version, even when you pass an older id. Pass
+`follow_supersession: false` to read the exact version you named. That is what
+you want when tracing what was believed at the time. Use `statement_history`
+to see the whole chain.
+
 `statement_history` is the one that answers "what did we think before". Reach
 for it whenever the current answer looks older than it should — recall ranks
 by **similarity, not recency**, so a stale claim can outrank the correction
@@ -32,15 +38,21 @@ Three verbs, and the difference between them matters:
   the new one becomes current. **This is almost always the right one.**
 - **`delete_statement`** — soft tombstone. The row survives for audit and
   stops being returned.
-- **`retract_statement`** — the stronger form: the **content does not
-  survive**. For something that should never have been recorded — a secret
-  pasted by accident, a claim about a person that was false and harmful.
+- **`retract_statement`** — the stronger form: it hides the statement from
+  listings now and schedules its content to be zeroed later. The response's
+  `will_zero_at_unix_nanos` says when that will happen. Anyone with the
+  statement id can still read the content until then. For something that
+  should never have been recorded — a secret pasted by accident, a claim
+  about a person that was false and harmful.
 
 Use `retract_statement` only when the content itself is the problem.
 Preferring it by default destroys the history that makes "what changed" a
 question Brain can answer at all.
+A real leaked secret must be rotated in the meantime, because retraction does
+not make it safe.
 
-The same three exist for edges: `supersede_relation`, `delete_relation`.
+Two verbs exist for edges: `supersede_relation`, `delete_relation`. An edge
+has no retract, so handle a relation whose content is the problem another way.
 
 ## Asserting directly
 
