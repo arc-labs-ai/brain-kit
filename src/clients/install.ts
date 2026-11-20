@@ -25,9 +25,9 @@ export const SERVER_PACKAGE = "@brain-db/mcp";
 
 /**
  * Pin the server range because unversioned npx reused a cached 0.3.2 build
- * with 49 tools, omitting tools shipped by the current 0.4.2 build.
+ * with 49 tools, omitting tools shipped by the current 0.4.3 build.
  */
-export const SERVER_PACKAGE_RANGE = "^0.4.2";
+export const SERVER_PACKAGE_RANGE = "^0.4.3";
 
 /** The npx package spec used to launch the self-hosted server. */
 export function serverPackageSpec(): string {
