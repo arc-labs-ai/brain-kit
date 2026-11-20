@@ -1,7 +1,7 @@
 {
   "name": "brain",
   "displayName": "Brain",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Durable, current-truth memory for your agent: remember, recall, reason, and a typed entity graph, backed by the Brain memory database.",
   "author": {
     "name": "Arc Labs",
