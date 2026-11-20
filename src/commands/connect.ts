@@ -35,6 +35,7 @@ import {
   targetById,
   targets,
 } from "../clients/index.js";
+import { serverPackageSpec } from "../clients/install.js";
 import {
   ConnectClient,
   ConnectError,
@@ -408,7 +409,7 @@ export function specFor(grant: Grant, options: ConnectOptions): ServerSpec {
     transport: "stdio",
     name: SERVER_NAME,
     command: "npx",
-    args: ["-y", SERVER_PACKAGE, "--stdio"],
+    args: ["-y", serverPackageSpec(), "--stdio"],
     env: {
       BRAIN_MCP_BACKEND_URL: grant.backendUrl,
       BRAIN_MCP_API_KEY: grant.apiKey,
