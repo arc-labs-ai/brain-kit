@@ -150,8 +150,9 @@ export const USAGE = `
     --client <id>        configure only this client; repeatable
                          (${knownIds().join(", ")})
     --key <key>          skip the browser and use this key — for CI and
-                         headless machines. Needs --namespace.
-    --namespace <name>   namespace for --key
+                         headless machines
+    --namespace <name>   label the install with this namespace instead of
+                         asking the backend which one the key belongs to
     --machine <name>     what to call this machine on the approval screen
     --no-browser         print the URL instead of opening one
     --dry-run            say what would change, write nothing
