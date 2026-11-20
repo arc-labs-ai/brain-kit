@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.2](https://github.com/arc-labs-ai/brain-kit/compare/v0.1.1...v0.1.2) (2026-11-20)
+
+
+### Features
+
+* **disconnect:** a command to take Brain off a machine ([#3](https://github.com/arc-labs-ai/brain-kit/issues/3)) ([a1b7c97](https://github.com/arc-labs-ai/brain-kit/commit/a1b7c97fcf6d843f274d3e4990a13b9dce963ed1))
+
+
+### Fixes
+
+* **connect:** ask the backend whose key it is, instead of requiring --namespace ([#4](https://github.com/arc-labs-ai/brain-kit/issues/4)) ([e74c82d](https://github.com/arc-labs-ai/brain-kit/commit/e74c82d8f2550eb7bb08d2887750586427f56fda))
+* **release:** publish from the tag only, and require the release token ([#5](https://github.com/arc-labs-ai/brain-kit/issues/5)) ([acaa4a9](https://github.com/arc-labs-ai/brain-kit/commit/acaa4a993525cf709dd88e970c397900896dd5da))
+
 ## [0.1.1](https://github.com/arc-labs-ai/brain-kit/compare/v0.1.0...v0.1.1) (2026-11-06)
 
 
