@@ -14,11 +14,19 @@ build one for loose prose: `remember` already extracts what it can.
 
 ## Finding something before creating it
 
-`create_entity` on something that already exists is an error, and the surface
-form a user says is rarely the canonical name.
+`create_entity` on something that already exists is an error. `resolve_entity`
+matches exactly, ignoring case and surrounding whitespace, against the
+canonical name or a recorded alias; it is not fuzzy or partial. Record the
+short forms people actually say as aliases so they resolve next time.
 
-1. `resolve_entity` — maps "the Acme account", "Priya", "that repo" onto the
-   entity it means. **Start here.**
+1. `resolve_entity` — matches the exact canonical name or recorded alias onto
+   the entity it means. **Start here.** `not_found` means no name or alias
+   matched that exact string; it does not prove the entity is absent. Use
+   `list_entities` for the type to check before creating one. `ambiguous` means
+   the name matched more than one entity across types; disambiguate
+   `candidate_ids` with `type_hint`, or ask. Never treat it as absent. Within
+   one type, a canonical match takes precedence over an alias match and returns
+   `resolved` with `confidence: 1` and an empty `candidate_ids`.
 2. `get_entity` — one entity by id, with its canonical name, type and
    attributes.
 3. `list_entities` — every entity of one type. The type is required; there is
@@ -34,6 +42,10 @@ form a user says is rarely the canonical name.
 
 `traverse_entity` is the one that answers reachability questions. Prefer it
 over pulling entities back one at a time and joining them yourself.
+
+**Warning:** When the answer matters, do not treat one unfiltered traversal as
+the complete set. Narrow by `relation_types` for the edge kind you care about
+and compare, because a narrower filter can surface paths the broad walk omitted.
 
 ## Changing an entity
 
@@ -52,9 +64,11 @@ Merge when the evidence is clear — same person, same service under two names.
 When it is a guess, say so and ask, because a merged graph reads as settled
 fact to everything downstream.
 
-`delete_entity` tombstones one so it stops appearing in listings and
-traversals. Reach for it when something should never have been in the graph,
-not when two things need combining.
+`delete_entity` tombstones one so it disappears from listings and stops
+resolving, but it remains reachable through `entity_relations`,
+`traverse_entity` and `graph`. It also destroys its aliases, and un-deleting
+does not recover them. Reach for it when something should never have been in
+the graph, not when two things need combining.
 
 ## Relations
 

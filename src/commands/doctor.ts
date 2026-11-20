@@ -28,7 +28,6 @@
 import { spawn } from "node:child_process";
 import {
   SERVER_NAME,
-  SERVER_PACKAGE,
   detect,
   inspect,
   installedSkills,
@@ -36,6 +35,8 @@ import {
   skillsDir,
   targets,
 } from "../clients/index.js";
+import { serverPackageSpec } from "../clients/install.js";
+import { skillDrift } from "../clients/skills.js";
 import { dim, field, heading, item, nextSteps, problem, say, section } from "../ui.js";
 
 export type DoctorOptions = {
@@ -84,14 +85,27 @@ export async function doctor(options: DoctorOptions): Promise<number> {
   // ── Skills ────────────────────────────────────────────────────────────────
   section("skills");
   const skills = installedSkills();
+  const drift = skillDrift();
   if (skills.length === 0) {
     item(
       "warn",
       "portable",
       `none in ${skillsDir()} — tools without the knowledge of when to use them`,
     );
-  } else {
-    item("ok", skills.join(", "), skillsDir());
+  } else if (drift.length === 0) {
+    item("ok", skills.join(", "), `${skillsDir()} — all delivered copies agree`);
+  }
+  if (drift.length > 0) {
+    item(
+      "warn",
+      drift.map(({ name }) => name).join(", "),
+      drift.map(({ locations }) => locations.join(" vs ")).join("; "),
+    );
+    item(
+      "warn",
+      "skill instructions",
+      "clients on this machine are being given different instructions for the same tools; the older copy is whichever channel has not been updated",
+    );
   }
 
   // ── The handshake: the only check here that proves anything ───────────────
@@ -480,7 +494,7 @@ function handshakeLocal(
   version: string,
 ): Promise<Probe> {
   return new Promise((resolve) => {
-    const child = spawn("npx", ["-y", SERVER_PACKAGE, "--stdio"], {
+    const child = spawn("npx", ["-y", serverPackageSpec(), "--stdio"], {
       env: {
         ...process.env,
         BRAIN_MCP_API_KEY: credential.apiKey,

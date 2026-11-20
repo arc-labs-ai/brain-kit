@@ -32,8 +32,11 @@ unless you check.
 
 ## Sessions
 
-A session attributes later writes, so one run's memories can be told from
-another's.
+A session is recorded on each write and appears in the session's
+`memory_count`. It does not separate memories on the read surface:
+`list_memories`, `recall`, `graph`, `list_statements` and `inspect_memory` do
+not take a session. `explain_query` and `trace_query` accept `sessions` and
+use it; `subscribe_events` accepts `sessions` but does not filter by it.
 
 | | |
 |---|---|
@@ -41,8 +44,35 @@ another's.
 | `list_sessions` | sessions in this workspace, newest activity first |
 | `delete_session` | retire one — soft by default, leaving its memories |
 
-Create a session when a long or automated run should be separable afterwards.
-A normal conversation needs none.
+Create one when you need to count or trace writes for a project or run. A
+session is not a way to list or recall that run's memories back. A run with
+nothing to separate should omit the session.
+
+Choose a stable identifier from the work at hand — a project, folder or task
+name — and derive an integer with SHA-256: read the first 13 hex digits as an
+integer. A salted or per-process hash is wrong because it changes across runs.
+The id is an integer accepted through 2^53-1 and rejected above it. Reusing it
+is idempotent: `create_session` returns `created: false` and keeps the existing
+session. Put the human-readable name in `title`; the id carries no name.
+
+`brain-kit` → first 13 hex digits of `SHA-256("brain-kit")`, read as an integer: `2262280137980493`
+
+## Durable now, derived later
+
+`remember` acknowledges after the memory is durable and recallable by text. In
+one measured write, acknowledgement took 55 ms; resolving a name from that
+text at t+0.1 s returned `not_found`, then four `stage_completed` events
+arrived at t+5.1 s and the same name resolved. The entities, statements and
+edges are derived a few seconds after the memory itself.
+
+`subscribe_events` reports those derivation stages. Pass the memory id to
+watch one write rather than the whole workspace. This is why the natural
+mistake — writing, immediately asking the entity or graph tools about it, and
+reading `not_found` as “it did not work” — is a timing issue, not a fault.
+
+Two details matter when polling: `from_lsn` re-delivers the event it names
+rather than resuming after it, so each poll sees one duplicate; the `sessions`
+filter does not filter at all, while the `memories` filter works correctly.
 
 ## Why a query did that
 
@@ -60,4 +90,8 @@ free, and it is not a dry run.
 `materialize_directives` renders this workspace's stored directives — the
 standing instructions it holds. Read them when behaviour should be shaped by
 what the user has told Brain to always do, rather than by what you can recall
-about a single question.
+about a single question. It currently returns `total_candidates: 0` and the
+block `(no procedural statements stored for this space yet)`, even in a
+workspace with current `directive` statements.
+Meanwhile, read those statements with `list_statements` filtered to the
+`directive` kind; that tool is documented in `brain-knowledge`.

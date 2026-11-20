@@ -218,8 +218,8 @@ shared skills for whatever else reads them.
 | `--backend <url>` | A different Brain, e.g. `http://localhost:8080` for a local brain-edge |
 | `--mcp-url <url>` | The MCP endpoint to point clients at. Unset means "whatever the deployment that issued the key hands out", which is the answer that cannot be wrong |
 | `--client <id>` | Only this client: `claude-code`, `codex`, `cursor`, `claude-desktop`, `windsurf`. Repeatable, and it configures the client whether or not it was detected |
-| `--key <key>` | Skip the browser and use this key. For CI and headless machines; needs `--namespace` |
-| `--namespace <name>` | Namespace for `--key` |
+| `--key <key>` | Skip the browser and use this key. For CI and headless machines — it asks the backend whose key it is, so a revoked one fails before anything on the machine is touched |
+| `--namespace <name>` | Label the install with this namespace instead of asking. For a machine that cannot reach the backend at all |
 | `--machine <name>` | What to call this machine on the approval screen |
 | `--no-browser` | Print the URL instead of opening one |
 | `--keep-skills` | `disconnect` only: leave `~/.agents/skills` alone |

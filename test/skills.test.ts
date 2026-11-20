@@ -1,6 +1,17 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { skillDrift } from "../src/clients/skills.js";
 
 /**
  * The shipped skills, checked against the Agent Skills spec and against each
@@ -136,5 +147,85 @@ describe("the tool index", () => {
     const groups = [...body().matchAll(/^## .+ — `([a-z-]+)`$/gm)].length;
     expect(groups).toBeGreaterThan(0);
     expect(body()).not.toMatch(/^- \*\*`[a-z_]+`\*\* — \s*$/m);
+  });
+
+  /**
+   * The generator's docstring said cross-repo freshness could not be checked
+   * here; the published package makes it possible by shipping its `dist/`.
+   */
+  it("matches the installed server's registered tools", () => {
+    const packageDir = join(import.meta.dirname, "..", "node_modules/@brain-db/mcp");
+    expect(
+      existsSync(packageDir),
+      "@brain-db/mcp is not installed; run npm install",
+    ).toBe(true);
+    if (!existsSync(packageDir)) return;
+
+    const toolsDir = join(packageDir, "dist/server/tools");
+    const serverNames = new Set<string>();
+    for (const file of readdirSync(toolsDir).filter((name) => name.endsWith(".js"))) {
+      const source = readFileSync(join(toolsDir, file), "utf8");
+      for (const match of source.matchAll(/registerTool\(\s*"([a-z_0-9]+)"/g)) {
+        if (match[1]) serverNames.add(match[1]);
+      }
+    }
+    expect(serverNames.size).toBeGreaterThan(0);
+
+    const indexNames = new Set(
+      [...body().matchAll(/^- \*\*`([a-z_]+)`\*\*/gm)].map((match) => match[1]),
+    );
+    expect(
+      [...serverNames].filter((name) => !indexNames.has(name)).sort(),
+      "the tool index is stale — re-run scripts/build-tool-index.py",
+    ).toEqual([]);
+    expect(
+      [...indexNames].filter((name) => !serverNames.has(name)).sort(),
+      "the index names tools the server no longer has",
+    ).toEqual([]);
+  });
+});
+
+describe("skill drift", () => {
+  it("reports differing copies and tolerates a missing plugin cache", () => {
+    const root = mkdtempSync(join(tmpdir(), "brain-skills-"));
+    const writeSkill = (path: string, body: string) => {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, body, "utf8");
+    };
+    try {
+      const bundled = join(root, "bundled");
+      const portable = join(root, "portable");
+      const pluginCache = join(root, "plugin-cache");
+      writeSkill(join(bundled, "same", "SKILL.md"), "same");
+      writeSkill(join(bundled, "different", "SKILL.md"), "reference");
+      writeSkill(join(portable, "same", "SKILL.md"), "same");
+      writeSkill(join(portable, "different", "SKILL.md"), "portable copy");
+      writeSkill(join(pluginCache, "0.1.1", "skills", "same", "SKILL.md"), "same");
+      writeSkill(
+        join(pluginCache, "0.1.1", "skills", "different", "SKILL.md"),
+        "plugin copy",
+      );
+
+      const drift = skillDrift({ bundled, portable, pluginCache });
+      expect(drift.map(({ name }) => name)).toEqual(["different"]);
+      expect(drift[0]?.locations).toEqual([
+        join(bundled, "different", "SKILL.md"),
+        join(portable, "different", "SKILL.md"),
+        join(pluginCache, "0.1.1", "skills", "different", "SKILL.md"),
+      ]);
+      expect(
+        skillDrift({ bundled, portable, pluginCache: join(root, "absent") }),
+      ).toEqual([
+        {
+          name: "different",
+          locations: [
+            join(bundled, "different", "SKILL.md"),
+            join(portable, "different", "SKILL.md"),
+          ],
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

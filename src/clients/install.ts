@@ -24,6 +24,17 @@ import type { ClientTarget, ServerSpec } from "./targets.js";
 export const SERVER_PACKAGE = "@brain-db/mcp";
 
 /**
+ * Pin the server range because unversioned npx reused a cached 0.3.2 build
+ * with 49 tools, omitting tools shipped by the current 0.4.2 build.
+ */
+export const SERVER_PACKAGE_RANGE = "^0.4.2";
+
+/** The npx package spec used to launch the self-hosted server. */
+export function serverPackageSpec(): string {
+  return `${SERVER_PACKAGE}@${SERVER_PACKAGE_RANGE}`;
+}
+
+/**
  * The environment variable Codex reads a bearer token from.
  *
  * `codex mcp add --url` accepts `--bearer-token-env-var <NAME>` and has no
